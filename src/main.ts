@@ -1,6 +1,7 @@
 import { app, BrowserWindow } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
+import { initAgent } from './main/agent';
 import { registerAgentIpc } from './main/ipc';
 
 if (started) {
@@ -30,8 +31,9 @@ const createWindow = () => {
 };
 
 
-app.on('ready', () => {
+app.on('ready', async () => {
   registerAgentIpc();
+  await initAgent();
   createWindow();
 });
 

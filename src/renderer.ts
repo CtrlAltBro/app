@@ -1,5 +1,5 @@
 import './index.css';
-import type { AgentStatus } from './shared/agent-api';
+import type { AgentStatus, SyncState } from './shared/agent-api';
 
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 
@@ -17,6 +17,8 @@ function render(status: AgentStatus) {
   paired.hidden = !status.paired;
   if (status.paired) {
     $('#device-name').textContent = status.deviceName;
+    $('#sync-status').textContent = syncLabel(status.sync);
+    $('#sync-status').classList.toggle('error', !!status.sync.error);
   } else {
     nameInput.value ||= status.suggestedName;
     codeInput.focus();
@@ -46,4 +48,10 @@ form.addEventListener('submit', async (event) => {
   }
 });
 
+function syncLabel({ lastSyncAt, error }: SyncState) {
+  const last = lastSyncAt ? `Dernière synchro : ${new Date(lastSyncAt).toLocaleTimeString()}` : 'Synchronisation…';
+  return error ? `${error} — ${lastSyncAt ? last.toLowerCase() : 'nouvel essai bientôt'}` : last;
+}
+
+window.agent.onStatus(render);
 window.agent.getStatus().then(render);

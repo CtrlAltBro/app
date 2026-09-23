@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { getStatus, pair } from './pairing';
+import { getStatus, pair } from './agent';
 
 export function registerAgentIpc() {
   ipcMain.handle('agent:getStatus', () => getStatus());
