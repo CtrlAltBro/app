@@ -17,6 +17,7 @@ Parental-control agent that runs on the child's Windows PC. Pairs with an accoun
 | `src/main/sync.ts` | `/sync` loop: every `nextSyncSeconds` (15 s), backoff up to 5 min, resync on resume, persists rules + pending command results + handled command ids |
 | `src/main/commands.ts` | Executes commands: `show_message`, `kill_app` (taskkill), `lock_session` (LockWorkStation) |
 | `src/main/inventory.ts` | Installed apps: Start menu shortcuts + Store apps (`Get-AppxPackage` manifests, named via `Get-StartApps`) + registry `Uninstall` keys (DisplayIcon exe), filtered (installers, `C:\Windows`, Package Cache). Rescanned hourly, sent only when its hash changes |
+| `src/main/screen-time.ts` | Foreground app tracking: a long-lived PowerShell prints the foreground window's exe + title every 5 s; sessions (cut on app change, lock, sleep, or every minute) are queued in `screen-time-queue.json` and sent via `/sync` |
 | `src/main/protected.ts` | Executables the agent must never kill or block (system processes, the agent itself) |
 | `src/main/credentials.ts`, `storage.ts` | Encrypted token, atomic JSON files in `userData` |
 | `src/main/config.ts` | `API_URL`, baked at build from `CTRLALTBRO_API_URL` (`.env.local`, see `.env.example`; default `http://localhost:5173`) |
@@ -54,7 +55,7 @@ Parental-control agent that runs on the child's Windows PC. Pairs with an accoun
 
 Collect (then send through `/sync`, queued on disk until a sync succeeds):
 - [x] Installed apps → `apps` (Start menu, Store apps, `Uninstall` keys; sent only when it changes). Caveat: HKCU, the user Start menu and `Get-AppxPackage` are per user, so they will be SYSTEM's if the agent runs as a service.
-- [ ] Foreground window tracking → `screenTime` sessions (`node-window-manager` or PowerShell polling).
+- [x] Screen time → `screenTime`. Counted while the session is unlocked and the PC awake, no idle threshold: Windows locks the PC after inactivity unless a video keeps the screen on, so the parent should enable lock after inactivity. Store apps (ApplicationFrameHost) are named by their window title. `C:\Windows` processes and the agent itself are ignored.
 - [ ] Edge history: copy the locked `History` SQLite file, read with `better-sqlite3` (native module → rebuilt for Electron by Forge; needs VS Build Tools) → `history`.
 
 Enforce (reconcile with the cached rules; remember what the agent set up so removed rules are undone):

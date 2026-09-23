@@ -44,6 +44,10 @@ $store = foreach ($pkg in Get-AppxPackage -PackageTypeFilter Main) {
 ConvertTo-Json -Compress -Depth 3 -InputObject @{ uninstall = @($uninstall); store = @($store) }
 `;
 
+// Display names from the last scan, used to label screen time.
+const appNames = new Map<string, string>();
+export const knownAppName = (exeName: string) => appNames.get(exeName);
+
 type Candidate = { exePath: string; name: string };
 
 function toApp({ exePath, name }: Candidate): InstalledApp | null {
@@ -121,6 +125,8 @@ export async function scanInstalledApps(): Promise<InstalledApp[]> {
     if (!existing) apps.set(found.exeName, found);
     else if (!existing.path && found.path) existing.path = found.path;
   }
+  appNames.clear();
+  for (const found of apps.values()) appNames.set(found.exeName, found.name);
   return [...apps.values()].sort((a, b) => a.exeName.localeCompare(b.exeName));
 }
 

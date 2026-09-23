@@ -12,20 +12,22 @@ export type Command =
 
 export type InstalledApp = { exeName: string; name: string; path?: string };
 
+export type ScreenTimeSession = {
+  id: string;
+  app: string;
+  exeName?: string;
+  title?: string;
+  startedAt: string;
+  endedAt: string;
+};
+
 export type CommandResult = { id: string; status: 'done' | 'failed'; error?: string };
 
 export type SyncInput = {
   agentVersion?: string;
   rulesVersion: number;
   apps?: InstalledApp[];
-  screenTime?: {
-    id: string;
-    app: string;
-    exeName?: string;
-    title?: string;
-    startedAt: string;
-    endedAt: string;
-  }[];
+  screenTime?: ScreenTimeSession[];
   history?: { id: string; browser: string; url: string; title?: string; visitedAt: string }[];
   commandResults?: CommandResult[];
 };

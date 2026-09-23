@@ -2,6 +2,7 @@ import { app } from 'electron';
 import type { CommandResult, Rules, SyncInput, SyncResponse } from '../shared/api-types';
 import { executeCommand } from './commands';
 import { inventoryHash, scanInstalledApps } from './inventory';
+import { acknowledgeScreenTime, pendingScreenTime } from './screen-time';
 import type { Credentials } from './credentials';
 import { readJson, removeJson, writeJson } from './storage';
 
@@ -48,6 +49,8 @@ export function startSyncLoop(credentials: Credentials, callbacks: SyncCallbacks
       rulesVersion: state.rules?.version ?? -1,
       commandResults: state.pendingResults,
     };
+    const screenTime = pendingScreenTime();
+    if (screenTime.length) body.screenTime = screenTime;
 
     let appsHash = state.appsHash;
     if (Date.now() - lastInventoryAt > INVENTORY_INTERVAL_MS) {
@@ -92,6 +95,7 @@ export function startSyncLoop(credentials: Credentials, callbacks: SyncCallbacks
       next.handledCommandIds = [...next.handledCommandIds, command.id].slice(-200);
     }
     await writeJson(STATE_FILE, next);
+    if (screenTime.length) await acknowledgeScreenTime(screenTime.map((s) => s.id));
 
     callbacks.onSynced(new Date());
     if (data.rules) callbacks.onRules(data.rules);

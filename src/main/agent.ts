@@ -3,6 +3,7 @@ import os from 'node:os';
 import type { AgentStatus, PairResult, SyncState } from '../shared/agent-api';
 import { API_URL } from './config';
 import { clearCredentials, loadCredentials, saveCredentials, type Credentials } from './credentials';
+import { startScreenTime, stopScreenTime } from './screen-time';
 import { clearAgentState, startSyncLoop } from './sync';
 
 let credentials: Credentials | null = null;
@@ -26,6 +27,7 @@ function setSyncState(state: SyncState) {
 
 function startSync(creds: Credentials) {
   syncLoop?.stop();
+  void startScreenTime();
   syncLoop = startSyncLoop(creds, {
     onSynced: (at) => setSyncState({ lastSyncAt: at.toISOString(), error: null }),
     onError: (message) => setSyncState({ ...syncState, error: message }),
@@ -38,6 +40,7 @@ function startSync(creds: Credentials) {
 async function unpair() {
   syncLoop?.stop();
   syncLoop = null;
+  await stopScreenTime({ clear: true });
   credentials = null;
   syncState = { lastSyncAt: null, error: null };
   await clearCredentials();
@@ -80,6 +83,7 @@ export async function pair(code: string, name: string): Promise<PairResult> {
   credentials = { apiUrl: API_URL, deviceId: body.deviceId, deviceName, token: body.token };
   await saveCredentials(credentials);
   await clearAgentState();
+  await stopScreenTime({ clear: true });
   syncState = { lastSyncAt: null, error: null };
   startSync(credentials);
   return { ok: true, status: getStatus() };
