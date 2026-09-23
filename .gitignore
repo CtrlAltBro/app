@@ -90,3 +90,8 @@ typings/
 
 # Electron-Forge
 out/
+
+# Custom
+specs.md
+.neon
+.env.local

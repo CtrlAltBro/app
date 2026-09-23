@@ -10,7 +10,8 @@
     "package": "electron-forge package",
     "make": "electron-forge make",
     "publish": "electron-forge publish",
-    "lint": "eslint --ext .ts,.tsx ."
+    "lint": "eslint --ext .ts,.tsx .",
+    "db:migrate": "node --env-file-if-exists=.env.local scripts/migrate.mjs"
   },
   "keywords": [],
   "author": {
@@ -38,6 +39,9 @@
     "vite": "^5.4.21"
   },
   "dependencies": {
-    "electron-squirrel-startup": "^1.0.1"
+    "@neon/config": "^1.7.2",
+    "@neon/env": "^1.4.3",
+    "electron-squirrel-startup": "^1.0.1",
+    "pg": "^8.23.0"
   }
 }
