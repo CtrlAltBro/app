@@ -93,5 +93,4 @@ out/
 
 # Custom
 specs.md
-.neon
 .env.local

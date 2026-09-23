@@ -1,33 +1,49 @@
-/**
- * This file will automatically be loaded by vite and run in the "renderer" context.
- * To learn more about the differences between the "main" and the "renderer" context in
- * Electron, visit:
- *
- * https://electronjs.org/docs/tutorial/process-model
- *
- * By default, Node.js integration in this file is disabled. When enabling Node.js integration
- * in a renderer process, please be aware of potential security implications. You can read
- * more about security risks here:
- *
- * https://electronjs.org/docs/tutorial/security
- *
- * To enable Node.js integration in this file, open up `main.ts` and enable the `nodeIntegration`
- * flag:
- *
- * ```
- *  // Create the browser window.
- *  mainWindow = new BrowserWindow({
- *    width: 800,
- *    height: 600,
- *    webPreferences: {
- *      nodeIntegration: true
- *    }
- *  });
- * ```
- */
-
 import './index.css';
+import type { AgentStatus } from './shared/agent-api';
 
-console.log(
-  '👋 This message is being logged by "renderer.ts", included via Vite',
-);
+const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
+
+const loading = $('#loading');
+const form = $<HTMLFormElement>('#pair-form');
+const codeInput = form.elements.namedItem('code') as HTMLInputElement;
+const nameInput = form.elements.namedItem('name') as HTMLInputElement;
+const submit = $<HTMLButtonElement>('#pair-form button');
+const error = $('#pair-error');
+const paired = $('#paired');
+
+function render(status: AgentStatus) {
+  loading.hidden = true;
+  form.hidden = status.paired;
+  paired.hidden = !status.paired;
+  if (status.paired) {
+    $('#device-name').textContent = status.deviceName;
+  } else {
+    nameInput.value ||= status.suggestedName;
+    codeInput.focus();
+  }
+}
+
+codeInput.addEventListener('input', () => {
+  const chars = codeInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+  codeInput.value = chars.length > 4 ? `${chars.slice(0, 4)}-${chars.slice(4)}` : chars;
+});
+
+form.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  submit.disabled = true;
+  submit.textContent = 'Appairage…';
+  error.hidden = true;
+
+  const result = await window.agent.pair(codeInput.value, nameInput.value);
+
+  submit.disabled = false;
+  submit.textContent = 'Appairer ce PC';
+  if (result.ok) {
+    render(result.status);
+  } else {
+    error.textContent = result.error;
+    error.hidden = false;
+  }
+});
+
+window.agent.getStatus().then(render);
