@@ -17,7 +17,7 @@ Parental-control agent that runs on the child's Windows PC. Pairs with an accoun
 | `src/main/sync.ts` | `/sync` loop: every `nextSyncSeconds` (15 s), backoff up to 5 min, resync on resume, persists rules + pending command results + handled command ids |
 | `src/main/commands.ts` | Executes commands. `show_message` works everywhere; `kill_app`, `lock_session` still to do (Windows) |
 | `src/main/credentials.ts`, `storage.ts` | Encrypted token, atomic JSON files in `userData` |
-| `src/main/config.ts` | `API_URL`, baked at build from `CTRLALTBRO_API_URL` (default `http://localhost:5173`, see `vite.main.config.ts`) |
+| `src/main/config.ts` | `API_URL`, baked at build from `CTRLALTBRO_API_URL` (`.env.local`, see `.env.example`; default `http://localhost:5173`) |
 | `src/shared/api-types.ts` | Hand-written mirror of the agent contract in `web-api/worker/schemas.ts`. Keep in sync by hand |
 | `src/shared/agent-api.ts` | Types of `window.agent` (preload bridge) |
 | `index.html`, `src/renderer.ts` | Pairing screen / paired status (vanilla TS) |
@@ -31,7 +31,15 @@ Parental-control agent that runs on the child's Windows PC. Pairs with an accoun
 
 - TypeScript strict, `npm run lint` + `npx tsc --noEmit` must pass.
 - User-facing text in French, code and comments in English. Keep comments minimal.
-- PowerShell env vars: `$env:CTRLALTBRO_API_URL="http://…"; npm start`.
+- API URL per machine goes in `.env.local` (gitignored). A shell env var overrides it: `$env:CTRLALTBRO_API_URL="http://…"; npm start`.
+
+## Dev setup
+
+- **Host PC**: runs `web-api` with `npm run dev -- --host` (API + dashboard on the LAN, e.g. `http://192.168.1.12:5173`, port 5173 open in the firewall). The dashboard is used from here.
+- **Hyper-V VM** (`WinDev2407Eval`, Windows, reached over SSH from VS Code): a clone of this repo where the agent is developed and run. This is where anything touching the registry, processes or admin rights gets tested, never on the host.
+- The agent on the VM needs `.env.local` (not in git, copy `.env.example`) with `CTRLALTBRO_API_URL=http://<host LAN IP>:5173`. Check with `curl http://<host LAN IP>:5173` from the VM.
+- Take a Hyper-V checkpoint of the VM before testing anything that writes to `HKLM` or kills processes.
+- Launching the agent from an SSH shell runs it in session 0 (no visible window): start it from the VM desktop.
 
 ## Done
 
