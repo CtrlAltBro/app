@@ -16,6 +16,7 @@ Parental-control agent that runs on the child's Windows PC. Pairs with an accoun
 | `src/main/agent.ts` | Agent state (paired / sync status), pairing, unpair on 401, pushes status to the window |
 | `src/main/sync.ts` | `/sync` loop: every `nextSyncSeconds` (15 s), backoff up to 5 min, resync on resume, persists rules + pending command results + handled command ids |
 | `src/main/commands.ts` | Executes commands: `show_message`, `kill_app` (taskkill), `lock_session` (LockWorkStation) |
+| `src/main/inventory.ts` | Installed apps: Start menu shortcuts (primary) + registry `Uninstall` keys (DisplayIcon exe), filtered (installers, `C:\Windows`, Package Cache). Rescanned hourly, sent only when its hash changes |
 | `src/main/protected.ts` | Executables the agent must never kill or block (system processes, the agent itself) |
 | `src/main/credentials.ts`, `storage.ts` | Encrypted token, atomic JSON files in `userData` |
 | `src/main/config.ts` | `API_URL`, baked at build from `CTRLALTBRO_API_URL` (`.env.local`, see `.env.example`; default `http://localhost:5173`) |
@@ -52,7 +53,7 @@ Parental-control agent that runs on the child's Windows PC. Pairs with an accoun
 **Safety first:** IFEO / Edge policies write to `HKLM` and need admin. Test in a VM with snapshots (or a restore point + a separate Windows account). Hard-code a list of executables the agent must never block (`explorer.exe`, `winlogon.exe`, `taskmgr.exe`, `csrss.exe`, the agent itself…).
 
 Collect (then send through `/sync`, queued on disk until a sync succeeds):
-- [ ] Installed apps: registry `Uninstall` keys (HKLM, HKLM\WOW6432Node, HKCU) → `apps` (send only when the inventory changes).
+- [x] Installed apps → `apps` (Start menu + `Uninstall` keys, sent only when it changes). Not covered yet: Store/UWP apps (`Get-StartApps`), and HKCU / user Start menu will be SYSTEM's if the agent runs as a service.
 - [ ] Foreground window tracking → `screenTime` sessions (`node-window-manager` or PowerShell polling).
 - [ ] Edge history: copy the locked `History` SQLite file, read with `better-sqlite3` (native module → rebuilt for Electron by Forge; needs VS Build Tools) → `history`.
 

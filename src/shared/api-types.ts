@@ -10,12 +10,14 @@ export type Command =
   | { id: string; type: 'lock_session'; payload: null }
   | { id: string; type: 'show_message'; payload: { text: string } };
 
+export type InstalledApp = { exeName: string; name: string; path?: string };
+
 export type CommandResult = { id: string; status: 'done' | 'failed'; error?: string };
 
 export type SyncInput = {
   agentVersion?: string;
   rulesVersion: number;
-  apps?: { exeName: string; name: string; path?: string }[];
+  apps?: InstalledApp[];
   screenTime?: {
     id: string;
     app: string;
