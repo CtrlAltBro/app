@@ -15,7 +15,8 @@ Parental-control agent that runs on the child's Windows PC. Pairs with an accoun
 | `src/main.ts` | Electron entry: window, `initAgent()`, IPC |
 | `src/main/agent.ts` | Agent state (paired / sync status), pairing, unpair on 401, pushes status to the window |
 | `src/main/sync.ts` | `/sync` loop: every `nextSyncSeconds` (15 s), backoff up to 5 min, resync on resume, persists rules + pending command results + handled command ids |
-| `src/main/commands.ts` | Executes commands. `show_message` works everywhere; `kill_app`, `lock_session` still to do (Windows) |
+| `src/main/commands.ts` | Executes commands: `show_message`, `kill_app` (taskkill), `lock_session` (LockWorkStation) |
+| `src/main/protected.ts` | Executables the agent must never kill or block (system processes, the agent itself) |
 | `src/main/credentials.ts`, `storage.ts` | Encrypted token, atomic JSON files in `userData` |
 | `src/main/config.ts` | `API_URL`, baked at build from `CTRLALTBRO_API_URL` (`.env.local`, see `.env.example`; default `http://localhost:5173`) |
 | `src/shared/api-types.ts` | Hand-written mirror of the agent contract in `web-api/worker/schemas.ts`. Keep in sync by hand |
@@ -59,7 +60,7 @@ Enforce (reconcile with the cached rules; remember what the agent set up so remo
 - [ ] App block: IFEO `Debugger` key → stub window "application bloquée"; one-off `taskkill` when the rule appears.
 - [ ] Daily limit: local per-app counter, reset at local midnight, block once the limit is reached.
 - [ ] Site block: `HKLM\SOFTWARE\Policies\Microsoft\Edge\URLBlocklist`, restart Edge to apply, `InPrivateModeAvailability = 1`.
-- [ ] Commands: `kill_app` (taskkill), `lock_session` (`rundll32 user32.dll,LockWorkStation`).
+- [x] Commands: `kill_app` (taskkill, refuses protected exes), `lock_session` (`rundll32 user32.dll,LockWorkStation`).
 
 Run as a real agent:
 - [ ] Admin manifest (`requireAdministrator`), start at boot (Task Scheduler or Windows service), tray icon / hidden window.
