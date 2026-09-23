@@ -19,16 +19,29 @@ const START_MENUS = [
   path.join(process.env.APPDATA ?? '', 'Microsoft', 'Windows', 'Start Menu', 'Programs'),
 ];
 
-const UNINSTALL_SCRIPT = `
+// One PowerShell run for both registry Uninstall keys and Store (packaged) apps.
+const SCAN_SCRIPT = `
 $ErrorActionPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $paths = 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',
   'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',
   'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'
-$apps = Get-ItemProperty $paths |
+$uninstall = Get-ItemProperty $paths |
   Where-Object { $_.DisplayName -and -not $_.SystemComponent -and -not $_.ParentKeyName } |
-  Select-Object DisplayName, DisplayIcon
-ConvertTo-Json -Compress -InputObject @($apps)
+  ForEach-Object { [pscustomobject]@{ name = $_.DisplayName; icon = $_.DisplayIcon } }
+$startNames = @{}
+Get-StartApps | ForEach-Object { $startNames[$_.AppID] = $_.Name }
+$store = foreach ($pkg in Get-AppxPackage -PackageTypeFilter Main) {
+  if ($pkg.IsFramework -or -not $pkg.InstallLocation) { continue }
+  [xml]$manifest = Get-Content -LiteralPath (Join-Path $pkg.InstallLocation 'AppxManifest.xml') -Raw
+  foreach ($app in $manifest.Package.Applications.Application) {
+    $name = $startNames["$($pkg.PackageFamilyName)!$($app.Id)"]
+    if ($name -and $app.Executable) {
+      [pscustomobject]@{ name = $name; exe = Join-Path $pkg.InstallLocation $app.Executable }
+    }
+  }
+}
+ConvertTo-Json -Compress -Depth 3 -InputObject @{ uninstall = @($uninstall); store = @($store) }
 `;
 
 type Candidate = { exePath: string; name: string };
@@ -70,32 +83,38 @@ async function fromStartMenu(): Promise<Candidate[]> {
   return found;
 }
 
-async function fromUninstallKeys(): Promise<Candidate[]> {
-  const script = Buffer.from(UNINSTALL_SCRIPT, 'utf16le').toString('base64');
+type ScanOutput = {
+  uninstall: { name: string; icon: string | null }[];
+  store: { name: string; exe: string }[];
+};
+
+async function fromPowerShell(): Promise<{ store: Candidate[]; registry: Candidate[] }> {
+  const script = Buffer.from(SCAN_SCRIPT, 'utf16le').toString('base64');
   const { stdout } = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', script], {
     windowsHide: true,
     maxBuffer: 16 * 1024 * 1024,
   });
-  const rows = JSON.parse(stdout || '[]') as { DisplayName: string; DisplayIcon: string | null }[];
-  return rows.flatMap((row) => {
+  const out = JSON.parse(stdout) as ScanOutput;
+  const registry = out.uninstall.flatMap((row) => {
     // DisplayIcon looks like "C:\path\app.exe",0
-    const icon = expandEnv((row.DisplayIcon ?? '').replace(/,-?\d+$/, '').replace(/"/g, '').trim());
-    return icon.toLowerCase().endsWith('.exe') ? [{ exePath: icon, name: row.DisplayName }] : [];
+    const icon = expandEnv((row.icon ?? '').replace(/,-?\d+$/, '').replace(/"/g, '').trim());
+    return icon.toLowerCase().endsWith('.exe') ? [{ exePath: icon, name: row.name }] : [];
   });
+  return { store: out.store.map((row) => ({ exePath: row.exe, name: row.name })), registry };
 }
 
 export async function scanInstalledApps(): Promise<InstalledApp[]> {
-  const [shortcuts, registry] = await Promise.all([
+  const [shortcuts, { store, registry }] = await Promise.all([
     fromStartMenu(),
-    fromUninstallKeys().catch((err: Error): Candidate[] => {
-      console.error('Uninstall keys scan failed:', err.message);
-      return [];
+    fromPowerShell().catch((err: Error) => {
+      console.error('Registry / Store apps scan failed:', err.message);
+      return { store: [], registry: [] };
     }),
   ]);
 
   const apps = new Map<string, InstalledApp>();
-  // Start menu names are what the child sees, so they win over registry names.
-  for (const candidate of [...shortcuts, ...registry]) {
+  // Start menu and Store names are what the child sees, so they win over registry names.
+  for (const candidate of [...shortcuts, ...store, ...registry]) {
     const found = toApp(candidate);
     if (!found) continue;
     const existing = apps.get(found.exeName);
