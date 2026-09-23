@@ -1,13 +1,47 @@
 <!doctype html>
-<html>
+<html lang="fr">
   <head>
     <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws:"
+    />
     <title>CtrlAltBro</title>
-
   </head>
   <body>
-    <h1>💖 Hello World!</h1>
-    <p>Welcome to your Electron application.</p>
+    <main>
+      <h1>CtrlAltBro</h1>
+
+      <p id="loading">Chargement…</p>
+
+      <form id="pair-form" hidden>
+        <p>Pour relier ce PC à ton compte, génère un code depuis le dashboard (« Ajouter un PC ») et saisis-le ici.</p>
+        <label>
+          Code d'appairage
+          <input
+            name="code"
+            placeholder="ABCD-EFGH"
+            autocomplete="off"
+            spellcheck="false"
+            maxlength="9"
+            required
+          />
+        </label>
+        <label>
+          Nom du PC
+          <input name="name" maxlength="100" required />
+        </label>
+        <p id="pair-error" class="error" role="alert" hidden></p>
+        <button type="submit">Appairer ce PC</button>
+      </form>
+
+      <section id="paired" hidden>
+        <p class="success">Ce PC est appairé.</p>
+        <p>Nom : <strong id="device-name"></strong></p>
+        <p id="sync-status" class="muted"></p>
+        <p class="muted">Tu peux le gérer depuis le dashboard.</p>
+      </section>
+    </main>
     <script type="module" src="/src/renderer.ts"></script>
   </body>
 </html>
