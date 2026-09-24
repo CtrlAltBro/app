@@ -3,6 +3,7 @@ import type { AppRule, Rules } from '../shared/api-types';
 import { killApp } from './commands';
 import { knownAppName } from './inventory';
 import { onForeground } from './screen-time';
+import { showTimeUp, snapshotForeground } from './time-up';
 import { readJson, removeJson, writeJson } from './storage';
 
 // Daily limits: count how long each app is in the foreground and, once a rule is
@@ -69,18 +70,29 @@ function notify(title: string, body: string) {
 
 // Close an app and tell the child why, but not more than once per cooldown so a
 // program that lingers or relaunches doesn't spam dialogs.
-function enforce(exeName: string, reason: string) {
+// minutes: the daily limit, or null for a blocked app.
+function enforce(exeName: string, minutes: number | null) {
   const now = Date.now();
   if (now - (lastKillAt.get(exeName) ?? 0) < KILL_COOLDOWN_MS) return;
   lastKillAt.set(exeName, now);
   void persist();
-  void killApp(exeName)
-    .then((outcome) => {
-      if (outcome === 'protected') return; // system app we must not touch
-      console.log(`[limits] ✋ ${exeName} → ${outcome} (${reason})`);
-      void dialog.showMessageBox({ type: 'info', title: 'CtrlAltBro', message: `${label(exeName)} — ${reason}` });
-    })
-    .catch((err) => console.error('[limits] fermeture échouée:', err));
+  void (async () => {
+    // Picture the window before it disappears, for the "time's up" screen.
+    const snapshot = await snapshotForeground().catch(() => null);
+    const outcome = await killApp(exeName);
+    if (outcome === 'protected') return; // system app we must not touch
+    console.log(`[limits] ✋ ${exeName} → ${outcome} (${minutes === null ? 'bloquée' : `limite ${minutes} min`})`);
+    showTimeUp(
+      snapshot,
+      minutes === null
+        ? { title: 'Application bloquée', app: label(exeName), detail: "Tes parents ont bloqué cette application sur ce PC." }
+        : {
+            title: 'Temps écoulé',
+            app: label(exeName),
+            detail: `Tu as utilisé tes ${minutes} min d'aujourd'hui. On se retrouve demain !`,
+          },
+    );
+  })().catch((err) => console.error('[limits] fermeture échouée:', err));
 }
 
 function onTick(exeName: string | null, elapsedMs: number) {
@@ -96,7 +108,7 @@ function onTick(exeName: string | null, elapsedMs: number) {
   if (!rule) return;
 
   if (rule.mode === 'block') {
-    enforce(exeName, 'cette application est bloquée.');
+    enforce(exeName, null);
     return;
   }
 
@@ -104,7 +116,7 @@ function onTick(exeName: string | null, elapsedMs: number) {
   if (rule.dailyLimitMinutes == null) return;
   const limitMs = rule.dailyLimitMinutes * 60_000;
   if (used >= limitMs) {
-    enforce(exeName, `temps écoulé pour aujourd'hui (${rule.dailyLimitMinutes} min).`);
+    enforce(exeName, rule.dailyLimitMinutes);
   } else if (used >= limitMs - WARN_BEFORE_MS && !warned.has(exeName)) {
     warned.add(exeName);
     const leftMin = Math.max(1, Math.round((limitMs - used) / 60_000));
