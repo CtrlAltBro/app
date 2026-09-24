@@ -1,4 +1,5 @@
 import { app } from 'electron';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -15,7 +16,8 @@ export async function readJson<T>(name: string): Promise<T | null> {
 
 export async function writeJson(name: string, value: unknown) {
   const file = dataFile(name);
-  const tmp = `${file}.tmp`;
+  // Unique temp name: two concurrent writes of the same file must not share it.
+  const tmp = `${file}.${randomUUID()}.tmp`;
   await fs.mkdir(path.dirname(file), { recursive: true });
   await fs.writeFile(tmp, JSON.stringify(value, null, 2), { mode: 0o600 });
   await fs.rename(tmp, file);

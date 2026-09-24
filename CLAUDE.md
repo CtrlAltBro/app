@@ -14,12 +14,12 @@ Parental-control agent that runs on the child's Windows PC. Pairs with an accoun
 | --- | --- |
 | `src/main.ts` | Electron entry: window, `initAgent()`, IPC |
 | `src/main/agent.ts` | Agent state (paired / sync status), pairing, unpair on 401, pushes status to the window |
-| `src/main/sync.ts` | Heartbeat loop: `/ping` every 30 s (KV only, cheap). A full `/sync` runs only on `rev` change (command/rule), pending command results, a screen-time batch (every 15 min idle), or fast mode (parent watching → 15 s). Backoff on error; resync on resume; persists rules + pending results + handled command ids + last inventory hash |
+| `src/main/sync.ts` | Heartbeat loop: `/ping` every 30 s (KV only, cheap). A full `/sync` runs only on `rev` change (command/rule), pending command results, a screen-time batch (every 15 min idle), or fast mode (parent watching → 15 s), plus a forced upload on session lock / sleep. On app quit or Windows session end (`shutdownAgent`, max 4 s): last upload, then `/bye` so the dashboard shows the PC offline at once. Backoff on error; resync on resume; persists rules + pending results + handled command ids + last inventory hash |
 | `src/main/commands.ts` | Executes commands: `show_message`, `kill_app` (taskkill), `lock_session` (LockWorkStation) |
 | `src/main/inventory.ts` | Installed apps: Start menu shortcuts + Store apps (`Get-AppxPackage` manifests, named via `Get-StartApps`) + registry `Uninstall` keys (DisplayIcon exe), filtered (installers, `C:\Windows`, Package Cache). Rescanned hourly, sent only when its hash changes |
-| `src/main/screen-time.ts` | Foreground app tracking: a long-lived PowerShell prints the foreground window's exe + title every 5 s; sessions (cut on app change, lock, sleep, or every minute) are queued in `screen-time-queue.json` and sent via `/sync` |
+| `src/main/screen-time.ts` | Foreground app tracking: a long-lived PowerShell prints the foreground window's exe + title every 5 s; sessions (cut on app change, lock, sleep, or every minute) are queued in `screen-time-queue.json` and sent via `/sync`. Back-to-back sessions with the same app and window title are merged into one row, except sessions already handed to an upload in progress |
 | `src/main/protected.ts` | Executables the agent must never kill or block (system processes, the agent itself) |
-| `src/main/credentials.ts`, `storage.ts` | Encrypted token, atomic JSON files in `userData` |
+| `src/main/credentials.ts`, `storage.ts` | Encrypted token, atomic JSON files in `userData` (unique temp file per write, so concurrent writes of one file are safe) |
 | `src/main/config.ts` | `API_URL`, baked at build from `CTRLALTBRO_API_URL` (`.env.local`, see `.env.example`; default `http://localhost:5173`) |
 | `src/shared/api-types.ts` | Hand-written mirror of the agent contract in `web-api/worker/schemas.ts`. Keep in sync by hand |
 | `src/shared/agent-api.ts` | Types of `window.agent` (preload bridge) |

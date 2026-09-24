@@ -2,7 +2,7 @@ import { app } from 'electron';
 import type { CommandResult, Rules, SyncInput, SyncResponse } from '../shared/api-types';
 import { executeCommand } from './commands';
 import { inventoryHash, scanInstalledApps } from './inventory';
-import { acknowledgeScreenTime, pendingScreenTime } from './screen-time';
+import { acknowledgeScreenTime, pendingScreenTime, pendingScreenTimeCount } from './screen-time';
 import type { Credentials } from './credentials';
 import { readJson, removeJson, writeJson } from './storage';
 
@@ -51,6 +51,9 @@ export function startSyncLoop(credentials: Credentials, callbacks: SyncCallbacks
   let lastInventoryAt = 0;
   let lastRev: string | null = null;
   let lastScreenFlushAt = Date.now();
+  // Set by flush(): upload now, whatever the batching says (lock, app quit, shutdown).
+  let forceFlush = false;
+  let currentTick: Promise<void> = Promise.resolve();
 
   async function post<T>(path: string, body: unknown): Promise<T> {
     const res = await fetch(`${credentials.apiUrl}/api/agent/v1/${path}`, {
@@ -118,7 +121,12 @@ export function startSyncLoop(credentials: Credentials, callbacks: SyncCallbacks
     return next.pendingResults.length; // results to report → sync again promptly
   }
 
-  async function tick() {
+  function tick() {
+    currentTick = runTick();
+    return currentTick;
+  }
+
+  async function runTick() {
     if (running || stopped) return;
     running = true;
     clearTimeout(timer);
@@ -129,18 +137,22 @@ export function startSyncLoop(credentials: Credentials, callbacks: SyncCallbacks
 
       const revChanged = lastRev === null || heartbeat.rev !== lastRev;
       const hasResults = state.pendingResults.length > 0;
-      const screenPending = pendingScreenTime().length;
+      const screenPending = pendingScreenTimeCount();
       const flushDue = screenPending > 0 && Date.now() - lastScreenFlushAt > SLOW_FLUSH_MS;
-      const doSync = heartbeat.fast || revChanged || hasResults || flushDue;
+      const forced = forceFlush && screenPending > 0;
+      forceFlush = false;
+      const doSync = forced || heartbeat.fast || revChanged || hasResults || flushDue;
 
       if (doSync) {
-        const why = heartbeat.fast
-          ? '🔥 parent connecté (mode rapide)'
-          : revChanged
-            ? '🔔 une règle/commande a changé'
-            : hasResults
-              ? '📮 résultats de commande à remonter'
-              : `📦 lot de temps d'écran (${screenPending} sessions)`;
+        const why = forced
+          ? `🔒 verrouillage / fermeture → j'envoie tout (${screenPending} sessions)`
+          : heartbeat.fast
+            ? '🔥 parent connecté (mode rapide)'
+            : revChanged
+              ? '🔔 une règle/commande a changé'
+              : hasResults
+                ? '📮 résultats de commande à remonter'
+                : `📦 lot de temps d'écran (${screenPending} sessions)`;
         console.log(`[sync] ${why} → full sync`);
         const resultsPending = await syncOnce();
         lastRev = heartbeat.rev;
@@ -174,6 +186,20 @@ export function startSyncLoop(credentials: Credentials, callbacks: SyncCallbacks
 
   return {
     syncNow: () => void tick(),
+    // Upload the screen-time queue now. Awaitable, for app quit.
+    async flush() {
+      forceFlush = true;
+      await currentTick;
+      await tick();
+    },
+    // Tell the API we are leaving so the dashboard shows the PC offline right away.
+    async bye() {
+      await fetch(`${credentials.apiUrl}/api/agent/v1/bye`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${credentials.token}` },
+        signal: AbortSignal.timeout(3_000),
+      }).catch(() => undefined);
+    },
     stop() {
       stopped = true;
       clearTimeout(timer);

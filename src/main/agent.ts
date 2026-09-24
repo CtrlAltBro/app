@@ -3,8 +3,11 @@ import os from 'node:os';
 import type { AgentStatus, PairResult, SyncState } from '../shared/agent-api';
 import { API_URL } from './config';
 import { clearCredentials, loadCredentials, saveCredentials, type Credentials } from './credentials';
-import { startScreenTime, stopScreenTime } from './screen-time';
+import { onFlushRequested, saveCurrentSession, startScreenTime, stopScreenTime } from './screen-time';
 import { clearAgentState, startSyncLoop } from './sync';
+
+// Longest we hold the app open at quit / shutdown to upload pending screen time.
+const QUIT_FLUSH_TIMEOUT_MS = 4_000;
 
 let credentials: Credentials | null = null;
 let syncState: SyncState = { lastSyncAt: null, error: null };
@@ -34,10 +37,34 @@ function startSync(creds: Credentials) {
     onRules: (rules) => console.log(`Rules v${rules.version}:`, JSON.stringify(rules)),
     onUnauthorized: () => void unpair(),
   });
+  // Session locked / PC going to sleep: upload now instead of waiting for the next batch.
+  onFlushRequested(() => void syncLoop?.flush());
+}
+
+// App quit or Windows shutdown: keep the running session, then try to upload
+// everything within a short delay (anything left stays on disk for next start).
+let shuttingDown: Promise<void> | null = null;
+
+export function shutdownAgent() {
+  shuttingDown ??= (async () => {
+    await saveCurrentSession();
+    const loop = syncLoop;
+    if (!loop) return;
+    console.log('[sync] 👋 fermeture → dernier envoi, puis je me déclare hors ligne');
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, QUIT_FLUSH_TIMEOUT_MS));
+    const goodbye = loop
+      .flush()
+      .catch(() => {})
+      .then(() => loop.bye());
+    await Promise.race([goodbye, timeout]);
+    loop.stop();
+  })();
+  return shuttingDown;
 }
 
 // The device was deleted from the dashboard: its token no longer works.
 async function unpair() {
+  onFlushRequested(null);
   syncLoop?.stop();
   syncLoop = null;
   await stopScreenTime({ clear: true });

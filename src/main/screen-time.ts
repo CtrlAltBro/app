@@ -18,6 +18,8 @@ const GAP_MS = 30_000;
 const MAX_SESSION_MS = 60 * 1000;
 const MAX_QUEUE = 10_000;
 const RESTART_DELAY_MS = 5_000;
+// Consecutive sessions closer than this (same app and title) are merged into one row.
+const MERGE_GAP_MS = 2 * TICK_MS;
 const EXE_NAME = /^[^\\/:*?"<>|]{1,255}\.exe$/;
 const WINDOWS_DIR = (process.env.SystemRoot ?? 'C:\\Windows').toLowerCase() + '\\';
 // Store apps are drawn by this host process; their window title is the app name.
@@ -55,6 +57,8 @@ let watcher: ChildProcess | null = null;
 let timer: NodeJS.Timeout | undefined;
 let restartTimer: NodeJS.Timeout | undefined;
 let lastTickMs = 0;
+let inFlight = new Set<string>();
+let flushRequested: (() => void) | null = null;
 
 function describe({ exePath, title }: Foreground) {
   const exeName = path.win32.basename(exePath).toLowerCase();
@@ -67,9 +71,14 @@ function describe({ exePath, title }: Foreground) {
   return { key: exeName, app, exeName: EXE_NAME.test(exeName) ? exeName : undefined, title: title.slice(0, 1000) || undefined };
 }
 
-async function persist() {
+// Writes run one after another, each saving the queue as it is when its turn comes,
+// so the file on disk always ends up with the latest state.
+let writing: Promise<void> = Promise.resolve();
+
+function persist() {
   if (queue.length > MAX_QUEUE) queue = queue.slice(-MAX_QUEUE);
-  await writeJson(QUEUE_FILE, queue);
+  writing = writing.catch(() => undefined).then(() => writeJson(QUEUE_FILE, queue));
+  return writing;
 }
 
 function close() {
@@ -77,8 +86,23 @@ function close() {
   const { id, app, exeName, title, startedAt, startMs, lastMs } = current;
   current = null;
   if (lastMs - startMs < 1000) return;
-  queue.push({ id, app, exeName, title, startedAt, endedAt: new Date(lastMs).toISOString() });
-  void persist();
+  const endedAt = new Date(lastMs).toISOString();
+  // Same app and window right after the previous session: extend it instead of adding a row.
+  // Sessions already handed to a sync in progress are left alone (they may be acknowledged).
+  const prev = queue[queue.length - 1];
+  if (
+    prev &&
+    !inFlight.has(prev.id) &&
+    prev.app === app &&
+    prev.exeName === exeName &&
+    prev.title === title &&
+    startMs - Date.parse(prev.endedAt) <= MERGE_GAP_MS
+  ) {
+    prev.endedAt = endedAt;
+  } else {
+    queue.push({ id, app, exeName, title, startedAt, endedAt });
+  }
+  persist().catch((err) => console.error('Screen time queue write failed:', err));
 }
 
 function tick() {
@@ -132,6 +156,19 @@ export async function startScreenTime() {
 
 function onSuspend() {
   close();
+  // The child is leaving the PC: a good moment to upload the queue.
+  flushRequested?.();
+}
+
+// Called on lock / sleep so the sync loop can upload right away.
+export function onFlushRequested(fn: (() => void) | null) {
+  flushRequested = fn;
+}
+
+// Closes the running session and writes the queue to disk (app quit, Windows shutdown).
+export async function saveCurrentSession() {
+  close();
+  await persist();
 }
 
 export async function stopScreenTime({ clear = false } = {}) {
@@ -149,11 +186,19 @@ export async function stopScreenTime({ clear = false } = {}) {
   }
 }
 
+export const pendingScreenTimeCount = () => queue.length;
+
 // Sessions to send with the next sync (oldest first, API accepts 2000 per call).
-export const pendingScreenTime = () => queue.slice(0, 2000);
+// Copies, so a merge during the upload cannot change what is being sent.
+export function pendingScreenTime() {
+  const batch = queue.slice(0, 2000).map((s) => ({ ...s }));
+  inFlight = new Set(batch.map((s) => s.id));
+  return batch;
+}
 
 export async function acknowledgeScreenTime(ids: string[]) {
   const sent = new Set(ids);
   queue = queue.filter((s) => !sent.has(s.id));
+  inFlight = new Set();
   await persist();
 }
