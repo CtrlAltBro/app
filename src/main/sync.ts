@@ -31,6 +31,9 @@ const loadState = async (): Promise<AgentState> =>
 
 export const clearAgentState = () => removeJson(STATE_FILE);
 
+// Rules from the last successful sync, so limits apply at startup even offline.
+export const cachedRules = async () => (await loadState()).rules;
+
 type SyncCallbacks = {
   onSynced(at: Date): void;
   onError(message: string): void;
