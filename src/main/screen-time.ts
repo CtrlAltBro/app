@@ -25,29 +25,38 @@ const WINDOWS_DIR = (process.env.SystemRoot ?? 'C:\\Windows').toLowerCase() + '\
 // Store apps are drawn by this host process; their window title is the app name.
 const STORE_HOST = 'applicationframehost.exe';
 
-// Prints "<exe path>\t<window title>" for the foreground window every tick.
+// Prints "<exe path>\t<window title>\t<left,top,right,bottom>" for the foreground window
+// every tick. DPI aware, so the rectangle is in physical pixels.
 const FOREGROUND_SCRIPT = `
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 Add-Type -Namespace CtrlAltBro -Name Win -MemberDefinition @'
+public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
 [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
 [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
 [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr hwnd, System.Text.StringBuilder text, int max);
+[DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
+[DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
 '@
+[void][CtrlAltBro.Win]::SetProcessDPIAware()
 $text = New-Object System.Text.StringBuilder 512
+$rect = New-Object CtrlAltBro.Win+RECT
 while ($true) {
   $procId = 0
   $hwnd = [CtrlAltBro.Win]::GetForegroundWindow()
   [void][CtrlAltBro.Win]::GetWindowThreadProcessId($hwnd, [ref]$procId)
   [void][CtrlAltBro.Win]::GetWindowText($hwnd, $text, 512)
+  $bounds = if ([CtrlAltBro.Win]::GetWindowRect($hwnd, [ref]$rect)) { @($rect.Left, $rect.Top, $rect.Right, $rect.Bottom) -join ',' } else { '' }
   # PID 0 means no foreground window (lock screen, desktop switch).
   $p = if ($procId) { Get-Process -Id $procId -ErrorAction SilentlyContinue } else { $null }
   $exe = if ($p.Path) { $p.Path } elseif ($p) { $p.ProcessName + '.exe' } else { '' }
-  [Console]::Out.WriteLine($exe + [char]9 + ($text.ToString() -replace '\\s+', ' '))
+  [Console]::Out.WriteLine($exe + [char]9 + ($text.ToString() -replace '\\s+', ' ') + [char]9 + $bounds)
   Start-Sleep -Milliseconds ${TICK_MS}
 }
 `;
 
-type Foreground = { exePath: string; title: string };
+// Foreground window rectangle, physical pixels.
+export type WindowRect = { left: number; top: number; right: number; bottom: number };
+type Foreground = { exePath: string; title: string; rect: WindowRect | null };
 type Current = ScreenTimeSession & { key: string; startMs: number; lastMs: number };
 
 let queue: ScreenTimeSession[] = [];
@@ -66,6 +75,9 @@ let foregroundListener: ((exeName: string | null, elapsedMs: number) => void) | 
 export function onForeground(fn: typeof foregroundListener) {
   foregroundListener = fn;
 }
+
+// Where the foreground window was at the last tick (for the "time's up" screen).
+export const foregroundRect = () => latest?.rect ?? null;
 
 function describe({ exePath, title }: Foreground) {
   const exeName = path.win32.basename(exePath).toLowerCase();
@@ -142,8 +154,10 @@ function spawnWatcher() {
   const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', script], { windowsHide: true });
   watcher = child;
   createInterface({ input: child.stdout! }).on('line', (line) => {
-    const [exePath = '', title = ''] = line.split('\t');
-    latest = { exePath: exePath.trim(), title: title.trim() };
+    const [exePath = '', title = '', bounds = ''] = line.split('\t');
+    const [left, top, right, bottom] = bounds.split(',').map(Number);
+    const rect = right > left && bottom > top ? { left, top, right, bottom } : null;
+    latest = { exePath: exePath.trim(), title: title.trim(), rect };
   });
   child.on('exit', () => {
     if (watcher !== child) return;
