@@ -59,6 +59,13 @@ let restartTimer: NodeJS.Timeout | undefined;
 let lastTickMs = 0;
 let inFlight = new Set<string>();
 let flushRequested: (() => void) | null = null;
+let foregroundListener: ((exeName: string | null, elapsedMs: number) => void) | null = null;
+
+// Called every tick with the counted foreground app (null when locked, idle desktop, system UI)
+// and the time since the previous tick. Used by the daily limits.
+export function onForeground(fn: typeof foregroundListener) {
+  foregroundListener = fn;
+}
 
 function describe({ exePath, title }: Foreground) {
   const exeName = path.win32.basename(exePath).toLowerCase();
@@ -107,12 +114,14 @@ function close() {
 
 function tick() {
   const now = Date.now();
-  const slept = lastTickMs && now - lastTickMs > GAP_MS;
+  const elapsedMs = lastTickMs ? now - lastTickMs : 0;
+  const slept = elapsedMs > GAP_MS;
   lastTickMs = now;
   if (slept) close();
 
   const locked = powerMonitor.getSystemIdleState(1) === 'locked';
   const fg = !locked && latest ? describe(latest) : null;
+  foregroundListener?.(fg?.exeName ?? null, slept ? 0 : elapsedMs);
 
   if (current && (!fg || fg.key !== current.key || now - current.startMs >= MAX_SESSION_MS)) {
     if (!slept) current.lastMs = now;

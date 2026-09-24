@@ -9,6 +9,18 @@ const run = promisify(execFile);
 // taskkill exit code when no process matches the image name.
 const TASKKILL_NOT_FOUND = 128;
 
+// Closes every process with this image name (and its child processes).
+export async function killApp(exeName: string): Promise<'killed' | 'not-running' | 'protected'> {
+  if (isProtected(exeName)) return 'protected';
+  try {
+    await run('taskkill.exe', ['/IM', exeName, '/F', '/T'], { windowsHide: true });
+    return 'killed';
+  } catch (e) {
+    if ((e as { code?: number }).code === TASKKILL_NOT_FOUND) return 'not-running';
+    throw e;
+  }
+}
+
 export async function executeCommand(command: Command): Promise<CommandResult> {
   const done = (): CommandResult => ({ id: command.id, status: 'done' });
   const failed = (error: string): CommandResult => ({ id: command.id, status: 'failed', error });
@@ -24,13 +36,9 @@ export async function executeCommand(command: Command): Promise<CommandResult> {
     switch (command.type) {
       case 'kill_app': {
         const { exeName } = command.payload;
-        if (isProtected(exeName)) return failed(`${exeName} est protégé et ne peut pas être fermé`);
-        try {
-          await run('taskkill.exe', ['/IM', exeName, '/F', '/T'], { windowsHide: true });
-        } catch (e) {
-          if ((e as { code?: number }).code === TASKKILL_NOT_FOUND) return failed(`${exeName} n'est pas lancé`);
-          throw e;
-        }
+        const outcome = await killApp(exeName);
+        if (outcome === 'protected') return failed(`${exeName} est protégé et ne peut pas être fermé`);
+        if (outcome === 'not-running') return failed(`${exeName} n'est pas lancé`);
         return done();
       }
       case 'lock_session':
