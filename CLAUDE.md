@@ -64,7 +64,45 @@ Enforce (reconcile with the cached rules; remember what the agent set up so remo
 - [ ] Site block: `HKLM\SOFTWARE\Policies\Microsoft\Edge\URLBlocklist`, restart Edge to apply, `InPrivateModeAvailability = 1`.
 - [x] Commands: `kill_app` (taskkill, refuses protected exes), `lock_session` (`rundll32 user32.dll,LockWorkStation`).
 
-Run as a real agent:
-- [ ] Admin manifest (`requireAdministrator`), start at boot (Task Scheduler or Windows service), tray icon / hidden window.
-- [ ] If running as SYSTEM: DPAPI keys are per account → pair from that context or change token storage.
-- [ ] Packaging with `npm run make` (Squirrel) and `CTRLALTBRO_API_URL` pointing to the deployed API. Code signing later (SmartScreen / Defender).
+## Target architecture: tamper resistance
+
+The child must not be able to close, kill or uninstall the agent. No trick between processes resists an admin account, so protection comes from Windows privileges first.
+
+**Prerequisite (setup, not code):** the child's Windows account is a **standard user**; the parent keeps the admin account. A standard user cannot kill another account's processes, stop services, write to `HKLM` / `Program Files` / `ProgramData`, or change the system time.
+
+**Split the agent in two:**
+
+| | Service (runs as SYSTEM) | Session app (Electron, runs as the child, no elevation) |
+| --- | --- | --- |
+| Role | Sync, rules, IFEO, Edge policies, taskkill, commands, updates | Tray icon, "application bloquée" window, messages, foreground tracking (screen time), per-user inventory (HKCU, Start menu, Appx) |
+| Killable by the child | No | Yes, relaunched by the service |
+| Restarted by | Service Control Manager (`sc failure CtrlAltBro reset= 60 actions= restart/1000/restart/1000/restart/5000`) | The service |
+
+- A service lives in session 0: no UI and no view of the child's desktop. That is why foreground tracking (`screen-time.ts`) and per-user inventory must move to the session app, which forwards data to the service.
+- Session app ↔ service over a named pipe, with a heartbeat every few seconds. Missing heartbeat while a user session is open → the service relaunches the app (logon scheduled task running as the child, triggered with `schtasks /run`) and reports a tamper event.
+- The service is probably not Electron (Forge fuses disable `RunAsNode`, headless Electron as a service is awkward): a standalone Node binary (Node SEA). `sync.ts`, `inventory.ts`, `commands.ts`, `protected.ts` move over mostly unchanged.
+- **No `requireAdministrator` manifest** on the session app: it would prompt UAC at every logon. Elevation lives only in the service.
+
+**Admin password is asked once, at install.** A per-machine MSI (UAC prompt typed by the parent) copies the app to `Program Files`, registers the service with its restart policy, creates the logon task for the session app, and creates `%ProgramData%\CtrlAltBro` with a SYSTEM/Administrators-only ACL. After that nothing ever prompts. Updates are installed by the service (already SYSTEM).
+
+**Session app behaviour (like Discord):** close button hides the window (`close` → `preventDefault()` + `hide()`), `Tray` icon without a "Quitter" entry (or behind a parent PIN), `app.requestSingleInstanceLock()`, `skipTaskbar` while hidden. Cosmetic on its own: standard user + service is what actually prevents killing it.
+
+**Current weaknesses to fix:**
+- Squirrel installs per user in `%LOCALAPPDATA%` (the child can delete it) → per-machine MSI (`@electron-forge/maker-wix`) or NSIS per-machine.
+- `device.json` / `agent-state.json` live in the child's `%APPDATA%` (can be deleted → unpairs, or edited → rules) → move to `%ProgramData%\CtrlAltBro`; DPAPI must then use machine scope, not user scope.
+
+**Other safeguards, by priority:**
+1. Dashboard alert when a device that synced recently goes silent for more than X minutes during the day (needs web-api work). Works even if everything else was bypassed.
+2. Tamper events sent through `/sync` (session app killed, service restarted, clock changed, uninstall attempt) → new `events` field in the agent contract (web-api + `api-types.ts`).
+3. Other browsers: a standard user can install Chrome/Firefox per user and bypass Edge policies → block `chrome.exe`, `firefox.exe`, `opera.exe`, `brave.exe` via IFEO by default.
+4. Daily limits based on the server time returned by `/sync`, not only the local clock.
+5. Local parent PIN (set from the dashboard, stored hashed) for quit / unpair / status.
+6. Later: AppLocker (only allow `Program Files` and `C:\Windows`) blocks portable and per-user executables. Windows Pro or higher only.
+
+**Order:**
+- [ ] Child account → standard user (setup).
+- [ ] Close-to-tray, `Tray` icon, single instance.
+- [ ] State files → `%ProgramData%\CtrlAltBro`, machine-scope DPAPI.
+- [ ] Service + session app split, SCM restart policy, named pipe + heartbeat, relaunch via logon task.
+- [ ] Per-machine MSI installer with `CTRLALTBRO_API_URL` pointing to the deployed API. Code signing later (SmartScreen / Defender).
+- [ ] Offline alert on the dashboard, tamper events, default block of other browsers.
