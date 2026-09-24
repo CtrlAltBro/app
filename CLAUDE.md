@@ -14,7 +14,7 @@ Parental-control agent that runs on the child's Windows PC. Pairs with an accoun
 | --- | --- |
 | `src/main.ts` | Electron entry: window, `initAgent()`, IPC |
 | `src/main/agent.ts` | Agent state (paired / sync status), pairing, unpair on 401, pushes status to the window |
-| `src/main/sync.ts` | `/sync` loop: every `nextSyncSeconds` (15 s), backoff up to 5 min, resync on resume, persists rules + pending command results + handled command ids |
+| `src/main/sync.ts` | Heartbeat loop: `/ping` every 30 s (KV only, cheap). A full `/sync` runs only on `rev` change (command/rule), pending command results, a screen-time batch (every 15 min idle), or fast mode (parent watching → 15 s). Backoff on error; resync on resume; persists rules + pending results + handled command ids + last inventory hash |
 | `src/main/commands.ts` | Executes commands: `show_message`, `kill_app` (taskkill), `lock_session` (LockWorkStation) |
 | `src/main/inventory.ts` | Installed apps: Start menu shortcuts + Store apps (`Get-AppxPackage` manifests, named via `Get-StartApps`) + registry `Uninstall` keys (DisplayIcon exe), filtered (installers, `C:\Windows`, Package Cache). Rescanned hourly, sent only when its hash changes |
 | `src/main/screen-time.ts` | Foreground app tracking: a long-lived PowerShell prints the foreground window's exe + title every 5 s; sessions (cut on app change, lock, sleep, or every minute) are queued in `screen-time-queue.json` and sent via `/sync` |

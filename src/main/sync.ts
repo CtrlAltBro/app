@@ -17,9 +17,14 @@ type AgentState = {
 };
 
 const STATE_FILE = 'agent-state.json';
-const DEFAULT_INTERVAL_S = 15;
-const MAX_BACKOFF_S = 300;
 const INVENTORY_INTERVAL_MS = 60 * 60 * 1000;
+
+// Cheap heartbeat: /ping hits only KV on the server, never Neon. A full /sync
+// (which does touch Neon) runs only when there is a reason to.
+const PING_MS = 30_000; // idle cadence: just say hi
+const FAST_MS = 15_000; // parent is watching: stream screen time live
+const SLOW_FLUSH_MS = 15 * 60 * 1000; // batch screen time this often when nobody watches
+const MAX_BACKOFF_S = 300;
 
 const loadState = async (): Promise<AgentState> =>
   (await readJson<AgentState>(STATE_FILE)) ?? { rules: null, pendingResults: [], handledCommandIds: [] };
@@ -34,6 +39,9 @@ type SyncCallbacks = {
 };
 
 class HttpError extends Error {}
+class Unauthorized extends Error {}
+
+type PingResponse = { rev: string; fast: boolean; nextPingSeconds: number };
 
 export function startSyncLoop(credentials: Credentials, callbacks: SyncCallbacks) {
   let timer: NodeJS.Timeout | undefined;
@@ -41,8 +49,26 @@ export function startSyncLoop(credentials: Credentials, callbacks: SyncCallbacks
   let stopped = false;
   let failures = 0;
   let lastInventoryAt = 0;
+  let lastRev: string | null = null;
+  let lastScreenFlushAt = Date.now();
 
-  async function syncOnce(): Promise<number | null> {
+  async function post<T>(path: string, body: unknown): Promise<T> {
+    const res = await fetch(`${credentials.apiUrl}/api/agent/v1/${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${credentials.token}` },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (res.status === 401) throw new Unauthorized();
+    if (!res.ok) throw new HttpError(`Erreur du serveur (HTTP ${res.status})`);
+    return (await res.json()) as T;
+  }
+
+  const ping = () =>
+    post<PingResponse>('ping', { agentVersion: app.getVersion() });
+
+  // Full sync: uploads inventory / screen time / command results, applies rules and commands.
+  async function syncOnce(): Promise<number> {
     const state = await loadState();
     const body: SyncInput = {
       agentVersion: app.getVersion(),
@@ -67,18 +93,7 @@ export function startSyncLoop(credentials: Credentials, callbacks: SyncCallbacks
       }
     }
 
-    const res = await fetch(`${credentials.apiUrl}/api/agent/v1/sync`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${credentials.token}` },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(30_000),
-    });
-    if (res.status === 401) {
-      callbacks.onUnauthorized();
-      return null;
-    }
-    if (!res.ok) throw new HttpError(`Erreur du serveur (HTTP ${res.status})`);
-    const data = (await res.json()) as SyncResponse;
+    const data = await post<SyncResponse>('sync', body);
 
     const next: AgentState = {
       rules: data.rules ?? state.rules,
@@ -96,30 +111,63 @@ export function startSyncLoop(credentials: Credentials, callbacks: SyncCallbacks
     }
     await writeJson(STATE_FILE, next);
     if (screenTime.length) await acknowledgeScreenTime(screenTime.map((s) => s.id));
+    if (screenTime.length) lastScreenFlushAt = Date.now();
 
     callbacks.onSynced(new Date());
     if (data.rules) callbacks.onRules(data.rules);
-    // Report command results right away instead of waiting a full interval.
-    return next.pendingResults.length ? 1 : data.nextSyncSeconds || DEFAULT_INTERVAL_S;
+    return next.pendingResults.length; // results to report → sync again promptly
   }
 
   async function tick() {
     if (running || stopped) return;
     running = true;
     clearTimeout(timer);
-    let delay: number | null;
+    let delayMs = PING_MS;
     try {
-      delay = await syncOnce();
+      const state = await loadState();
+      const heartbeat = await ping();
+
+      const revChanged = lastRev === null || heartbeat.rev !== lastRev;
+      const hasResults = state.pendingResults.length > 0;
+      const screenPending = pendingScreenTime().length;
+      const flushDue = screenPending > 0 && Date.now() - lastScreenFlushAt > SLOW_FLUSH_MS;
+      const doSync = heartbeat.fast || revChanged || hasResults || flushDue;
+
+      if (doSync) {
+        const why = heartbeat.fast
+          ? '🔥 parent connecté (mode rapide)'
+          : revChanged
+            ? '🔔 une règle/commande a changé'
+            : hasResults
+              ? '📮 résultats de commande à remonter'
+              : `📦 lot de temps d'écran (${screenPending} sessions)`;
+        console.log(`[sync] ${why} → full sync`);
+        const resultsPending = await syncOnce();
+        lastRev = heartbeat.rev;
+        // Report command results on the next tick without waiting a full interval.
+        delayMs = resultsPending ? 1_000 : heartbeat.fast ? FAST_MS : heartbeat.nextPingSeconds * 1000 || PING_MS;
+      } else {
+        console.log(
+          `[ping] 😴 rien de neuf${screenPending ? ` (${screenPending} sessions en attente du prochain lot)` : ''} — Neon pas touché`,
+        );
+        lastRev = heartbeat.rev;
+        delayMs = heartbeat.nextPingSeconds * 1000 || PING_MS;
+      }
       failures = 0;
     } catch (err) {
+      if (err instanceof Unauthorized) {
+        callbacks.onUnauthorized();
+        stopped = true;
+        running = false;
+        return;
+      }
       failures++;
       callbacks.onError(err instanceof HttpError ? err.message : 'Serveur injoignable');
-      delay = Math.min(DEFAULT_INTERVAL_S * 2 ** failures, MAX_BACKOFF_S);
+      delayMs = Math.min(PING_MS / 1000 * 2 ** failures, MAX_BACKOFF_S) * 1000;
     } finally {
       running = false;
     }
-    if (delay === null) stopped = true;
-    if (!stopped && delay !== null) timer = setTimeout(tick, delay * 1000);
+    if (!stopped) timer = setTimeout(tick, delayMs);
   }
 
   void tick();
