@@ -3,8 +3,9 @@ import os from 'node:os';
 import type { AgentStatus, PairResult, SyncState } from '../shared/agent-api';
 import { API_URL } from './config';
 import { clearCredentials, loadCredentials, saveCredentials, type Credentials } from './credentials';
+import { setLimitRules, startLimits, stopLimits } from './limits';
 import { onFlushRequested, saveCurrentSession, startScreenTime, stopScreenTime } from './screen-time';
-import { clearAgentState, startSyncLoop } from './sync';
+import { cachedRules, clearAgentState, startSyncLoop } from './sync';
 
 // Longest we hold the app open at quit / shutdown to upload pending screen time.
 const QUIT_FLUSH_TIMEOUT_MS = 4_000;
@@ -31,10 +32,15 @@ function setSyncState(state: SyncState) {
 function startSync(creds: Credentials) {
   syncLoop?.stop();
   void startScreenTime();
+  // Enforce with the rules cached from the last sync, so limits apply at startup even offline.
+  void cachedRules().then((rules) => startLimits(rules));
   syncLoop = startSyncLoop(creds, {
     onSynced: (at) => setSyncState({ lastSyncAt: at.toISOString(), error: null }),
     onError: (message) => setSyncState({ ...syncState, error: message }),
-    onRules: (rules) => console.log(`Rules v${rules.version}:`, JSON.stringify(rules)),
+    onRules: (rules) => {
+      console.log(`Rules v${rules.version}:`, JSON.stringify(rules));
+      setLimitRules(rules);
+    },
     onUnauthorized: () => void unpair(),
   });
   // Session locked / PC going to sleep: upload now instead of waiting for the next batch.
@@ -68,6 +74,7 @@ async function unpair() {
   syncLoop?.stop();
   syncLoop = null;
   await stopScreenTime({ clear: true });
+  await stopLimits();
   credentials = null;
   syncState = { lastSyncAt: null, error: null };
   await clearCredentials();

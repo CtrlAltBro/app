@@ -1,0 +1,168 @@
+import { app, dialog } from 'electron';
+import type { AppRule, Rules } from '../shared/api-types';
+import { killApp } from './commands';
+import { knownAppName } from './inventory';
+import { onForeground } from './screen-time';
+import { readJson, removeJson, writeJson } from './storage';
+
+// Daily limits: count how long each app is in the foreground and, once a rule is
+// hit, close it and tell the child. Everything is fed by onForeground() (one tick
+// every 5 s with the counted app and the time since the last tick), so this file
+// never watches the screen itself — it only decides what to do with each tick.
+
+const USAGE_FILE = 'daily-usage.json';
+// Warn the child once, this long before a limited app reaches its daily limit
+// (30 s in dev, so a 1-min limit can be tested without waiting).
+const WARN_BEFORE_MS = app.isPackaged ? 5 * 60 * 1000 : 30_000;
+// Don't kill (and nag about) the same app more than once within this window: after
+// a kill the process takes a moment to disappear, and it may be reopened at once.
+const KILL_COOLDOWN_MS = 10_000;
+// Counters change every tick; write them to disk at most this often (plus on any
+// kill / warn / day rollover), so a crash loses at most a few seconds of counting.
+const PERSIST_EVERY_MS = 15_000;
+
+type Usage = {
+  // Local day (YYYY-MM-DD) the counters below belong to; they reset at midnight.
+  day: string;
+  // Foreground milliseconds per exeName since local midnight.
+  ms: Record<string, number>;
+  // exeName → latest parent reset already applied, so each reset is applied once.
+  resets?: Record<string, string>;
+};
+
+let usage: Usage = { day: today(), ms: {} };
+let rules: AppRule[] = [];
+let started = false;
+// exeNames already warned today, so the "almost out of time" nag fires only once.
+const warned = new Set<string>();
+// exeName → last time we killed it, for the cooldown above.
+const lastKillAt = new Map<string, number>();
+let lastPersistAt = 0;
+
+function today(): string {
+  // Local date: limits follow the child's own midnight, not UTC.
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+const label = (exeName: string) => knownAppName(exeName) ?? exeName.replace(/\.exe$/i, '');
+
+async function persist() {
+  lastPersistAt = Date.now();
+  await writeJson(USAGE_FILE, usage).catch((err) => console.error('[limits] écriture du compteur échouée:', err));
+}
+
+// New day since the counters were written: start every total back at zero.
+function rolloverIfNewDay() {
+  const day = today();
+  if (day === usage.day) return;
+  usage = { day, ms: {} };
+  warned.clear();
+  void persist();
+}
+
+// A dialog rather than a toast: Windows drops Electron notifications from an
+// app without a registered AppUserModelID (e.g. the dev build).
+function notify(title: string, body: string) {
+  void dialog.showMessageBox({ type: 'info', title, message: body });
+}
+
+// Close an app and tell the child why, but not more than once per cooldown so a
+// program that lingers or relaunches doesn't spam dialogs.
+function enforce(exeName: string, reason: string) {
+  const now = Date.now();
+  if (now - (lastKillAt.get(exeName) ?? 0) < KILL_COOLDOWN_MS) return;
+  lastKillAt.set(exeName, now);
+  void persist();
+  void killApp(exeName)
+    .then((outcome) => {
+      if (outcome === 'protected') return; // system app we must not touch
+      console.log(`[limits] ✋ ${exeName} → ${outcome} (${reason})`);
+      void dialog.showMessageBox({ type: 'info', title: 'CtrlAltBro', message: `${label(exeName)} — ${reason}` });
+    })
+    .catch((err) => console.error('[limits] fermeture échouée:', err));
+}
+
+function onTick(exeName: string | null, elapsedMs: number) {
+  rolloverIfNewDay();
+  if (!exeName) return; // locked, idle desktop, system UI, or a Store app (no exe)
+
+  // Count every app, not only limited ones: a limit added mid-day must see the
+  // time already spent today, like the dashboard does.
+  const used = (usage.ms[exeName] = (usage.ms[exeName] ?? 0) + elapsedMs);
+  if (Date.now() - lastPersistAt > PERSIST_EVERY_MS) void persist();
+
+  const rule = rules.find((r) => r.exeName === exeName);
+  if (!rule) return;
+
+  if (rule.mode === 'block') {
+    enforce(exeName, 'cette application est bloquée.');
+    return;
+  }
+
+  // mode 'limit': a null limit means "no cap", so nothing to enforce.
+  if (rule.dailyLimitMinutes == null) return;
+  const limitMs = rule.dailyLimitMinutes * 60_000;
+  if (used >= limitMs) {
+    enforce(exeName, `temps écoulé pour aujourd'hui (${rule.dailyLimitMinutes} min).`);
+  } else if (used >= limitMs - WARN_BEFORE_MS && !warned.has(exeName)) {
+    warned.add(exeName);
+    const leftMin = Math.max(1, Math.round((limitMs - used) / 60_000));
+    console.log(`[limits] ⏳ ${exeName} : encore ${leftMin} min`);
+    notify('CtrlAltBro', `${label(exeName)} : encore ${leftMin} min aujourd'hui.`);
+  }
+}
+
+// Line the local counters up with what the API knows (sent with the rules):
+// - after a parent reset, the counter drops to the usage since that reset;
+// - otherwise keep the higher value, so usage from before a reinstall or before
+//   the limit existed still counts (the API lags behind by the unsent sessions).
+function mergeServerUsage(next: Rules) {
+  if (next.day !== usage.day) return; // usage from another day, or an old API
+  const resets = (usage.resets ??= {});
+  for (const rule of next.apps) {
+    if (rule.usedTodaySeconds === undefined) continue;
+    const serverMs = rule.usedTodaySeconds * 1000;
+    const localMs = usage.ms[rule.exeName] ?? 0;
+    if (rule.usageResetAt && rule.usageResetAt !== resets[rule.exeName]) {
+      resets[rule.exeName] = rule.usageResetAt;
+      usage.ms[rule.exeName] = serverMs;
+      warned.delete(rule.exeName);
+      console.log(`[limits] ⏪ ${rule.exeName} remis à zéro par le parent → ${Math.round(serverMs / 60_000)} min`);
+    } else if (serverMs > localMs) {
+      usage.ms[rule.exeName] = serverMs;
+      console.log(`[limits] 🔄 ${rule.exeName} : le serveur connaît ${Math.round(serverMs / 60_000)} min, j'en avais ${Math.round(localMs / 60_000)}`);
+    }
+  }
+  void persist();
+}
+
+// Replace the rules the limits act on. Called from agent.ts at each rules change.
+export function setLimitRules(next: Rules) {
+  rules = next.apps;
+  rolloverIfNewDay();
+  mergeServerUsage(next);
+}
+
+// Start counting and enforcing. Loads the counters and the rules cached from the
+// last sync, so limits apply right away, even before the first sync or offline.
+export async function startLimits(initialRules: Rules | null) {
+  const saved = await readJson<Usage>(USAGE_FILE);
+  usage = saved && saved.day === today() ? saved : { day: today(), ms: {} };
+  if (initialRules) setLimitRules(initialRules);
+  if (!started) {
+    started = true;
+    onForeground(onTick);
+  }
+}
+
+// Stop enforcing and forget today's counters (device unpaired).
+export async function stopLimits() {
+  onForeground(null);
+  started = false;
+  rules = [];
+  warned.clear();
+  lastKillAt.clear();
+  usage = { day: today(), ms: {} };
+  await removeJson(USAGE_FILE);
+}
