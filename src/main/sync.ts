@@ -78,6 +78,7 @@ export function startSyncLoop(credentials: Credentials, callbacks: SyncCallbacks
     const state = await loadState();
     const body: SyncInput = {
       agentVersion: app.getVersion(),
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       rulesVersion: state.rules?.version ?? -1,
       commandResults: state.pendingResults,
     };
