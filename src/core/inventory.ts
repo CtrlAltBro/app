@@ -3,8 +3,8 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { shell } from 'electron';
 import type { InstalledApp } from '../shared/api-types';
+import { host } from './host';
 
 const run = promisify(execFile);
 
@@ -71,9 +71,9 @@ async function fromStartMenu(): Promise<Candidate[]> {
     }
     for (const file of files) {
       if (!file.toLowerCase().endsWith('.lnk')) continue;
-      let link: Electron.ShortcutDetails;
+      let link: { target?: string; args?: string };
       try {
-        link = shell.readShortcutLink(path.join(dir, file));
+        link = host().readShortcut(path.join(dir, file));
       } catch {
         continue;
       }

@@ -1,4 +1,4 @@
-import { safeStorage } from 'electron';
+import { host } from './host';
 import { readJson, removeJson, writeJson } from './storage';
 
 export type Credentials = {
@@ -8,7 +8,7 @@ export type Credentials = {
   token: string;
 };
 
-// The token is encrypted with the OS keystore (DPAPI on Windows, Keychain on macOS).
+// The token is encrypted by the host (Electron: OS keystore, DPAPI on Windows).
 type StoredCredentials = Omit<Credentials, 'token'> & { encryptedToken: string };
 
 const FILE = 'device.json';
@@ -18,7 +18,7 @@ export async function loadCredentials(): Promise<Credentials | null> {
   if (!stored) return null;
   try {
     const { encryptedToken, ...rest } = stored;
-    return { ...rest, token: safeStorage.decryptString(Buffer.from(encryptedToken, 'base64')) };
+    return { ...rest, token: host().secrets.decrypt(encryptedToken) };
   } catch (err) {
     console.error('Stored device token cannot be decrypted; pairing again is required.', err);
     return null;
@@ -26,10 +26,10 @@ export async function loadCredentials(): Promise<Credentials | null> {
 }
 
 export async function saveCredentials({ token, ...rest }: Credentials) {
-  if (!safeStorage.isEncryptionAvailable()) {
+  if (!host().secrets.available()) {
     throw new Error('OS encryption is unavailable, refusing to store the device token in clear text.');
   }
-  await writeJson(FILE, { ...rest, encryptedToken: safeStorage.encryptString(token).toString('base64') });
+  await writeJson(FILE, { ...rest, encryptedToken: host().secrets.encrypt(token) });
 }
 
 export async function clearCredentials() {

@@ -1,8 +1,8 @@
-import { app } from 'electron';
 import type { CommandResult, Rules, SyncInput, SyncResponse } from '../shared/api-types';
 import { executeCommand } from './commands';
 import { inventoryHash, scanInstalledApps } from './inventory';
-import { acknowledgeScreenTime, pendingScreenTime, pendingScreenTimeCount } from './screen-time';
+import { host } from './host';
+import { acknowledgeScreenTime, pendingScreenTime, pendingScreenTimeCount } from './screen-time-queue';
 import type { Credentials } from './credentials';
 import { readJson, removeJson, writeJson } from './storage';
 
@@ -71,13 +71,13 @@ export function startSyncLoop(credentials: Credentials, callbacks: SyncCallbacks
   }
 
   const ping = () =>
-    post<PingResponse>('ping', { agentVersion: app.getVersion() });
+    post<PingResponse>('ping', { agentVersion: host().version });
 
   // Full sync: uploads inventory / screen time / command results, applies rules and commands.
   async function syncOnce(): Promise<number> {
     const state = await loadState();
     const body: SyncInput = {
-      agentVersion: app.getVersion(),
+      agentVersion: host().version,
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       rulesVersion: state.rules?.version ?? -1,
       commandResults: state.pendingResults,

@@ -1,20 +1,18 @@
-import { app, dialog } from 'electron';
 import type { AppRule, Rules } from '../shared/api-types';
 import { killApp } from './commands';
+import { host } from './host';
 import { knownAppName } from './inventory';
-import { onForeground } from './screen-time';
-import { showTimeUp, snapshotForeground } from './time-up';
 import { readJson, removeJson, writeJson } from './storage';
 
 // Daily limits: count how long each app is in the foreground and, once a rule is
-// hit, close it and tell the child. Everything is fed by onForeground() (one tick
+// hit, close it and tell the child. Everything is fed by foregroundTick() (one tick
 // every 5 s with the counted app and the time since the last tick), so this file
 // never watches the screen itself — it only decides what to do with each tick.
 
 const USAGE_FILE = 'daily-usage.json';
 // Warn the child once, this long before a limited app reaches its daily limit
 // (30 s in dev, so a 1-min limit can be tested without waiting).
-const WARN_BEFORE_MS = app.isPackaged ? 5 * 60 * 1000 : 30_000;
+const warnBeforeMs = () => (host().isDev ? 30_000 : 5 * 60 * 1000);
 // Don't kill (and nag about) the same app more than once within this window: after
 // a kill the process takes a moment to disappear, and it may be reopened at once.
 const KILL_COOLDOWN_MS = 10_000;
@@ -62,12 +60,6 @@ function rolloverIfNewDay() {
   void persist();
 }
 
-// A dialog rather than a toast: Windows drops Electron notifications from an
-// app without a registered AppUserModelID (e.g. the dev build).
-function notify(title: string, body: string) {
-  void dialog.showMessageBox({ type: 'info', title, message: body });
-}
-
 // Close an app and tell the child why, but not more than once per cooldown so a
 // program that lingers or relaunches doesn't spam dialogs.
 // minutes: the daily limit, or null for a blocked app.
@@ -78,12 +70,11 @@ function enforce(exeName: string, minutes: number | null) {
   void persist();
   void (async () => {
     // Picture the window before it disappears, for the "time's up" screen.
-    const snapshot = await snapshotForeground().catch(() => null);
+    await host().ui.snapshotForeground().catch(() => undefined);
     const outcome = await killApp(exeName);
     if (outcome === 'protected') return; // system app we must not touch
     console.log(`[limits] ✋ ${exeName} → ${outcome} (${minutes === null ? 'bloquée' : `limite ${minutes} min`})`);
-    showTimeUp(
-      snapshot,
+    host().ui.showTimeUp(
       minutes === null
         ? { title: 'Application bloquée', app: label(exeName), detail: "Tes parents ont bloqué cette application sur ce PC." }
         : {
@@ -95,7 +86,9 @@ function enforce(exeName: string, minutes: number | null) {
   })().catch((err) => console.error('[limits] fermeture échouée:', err));
 }
 
-function onTick(exeName: string | null, elapsedMs: number) {
+// One tick from the foreground sensor: the counted app and the time since the last tick.
+export function foregroundTick(exeName: string | null, elapsedMs: number) {
+  if (!started) return;
   rolloverIfNewDay();
   if (!exeName) return; // locked, idle desktop, system UI, or a Store app (no exe)
 
@@ -117,11 +110,11 @@ function onTick(exeName: string | null, elapsedMs: number) {
   const limitMs = rule.dailyLimitMinutes * 60_000;
   if (used >= limitMs) {
     enforce(exeName, rule.dailyLimitMinutes);
-  } else if (used >= limitMs - WARN_BEFORE_MS && !warned.has(exeName)) {
+  } else if (used >= limitMs - warnBeforeMs() && !warned.has(exeName)) {
     warned.add(exeName);
     const leftMin = Math.max(1, Math.round((limitMs - used) / 60_000));
     console.log(`[limits] ⏳ ${exeName} : encore ${leftMin} min`);
-    notify('CtrlAltBro', `${label(exeName)} : encore ${leftMin} min aujourd'hui.`);
+    host().ui.message(`${label(exeName)} : encore ${leftMin} min aujourd'hui.`);
   }
 }
 
@@ -162,15 +155,11 @@ export async function startLimits(initialRules: Rules | null) {
   const saved = await readJson<Usage>(USAGE_FILE);
   usage = saved && saved.day === today() ? saved : { day: today(), ms: {} };
   if (initialRules) setLimitRules(initialRules);
-  if (!started) {
-    started = true;
-    onForeground(onTick);
-  }
+  started = true;
 }
 
 // Stop enforcing and forget today's counters (device unpaired).
 export async function stopLimits() {
-  onForeground(null);
   started = false;
   rules = [];
   warned.clear();

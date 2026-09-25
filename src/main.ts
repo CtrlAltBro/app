@@ -1,7 +1,8 @@
 import { app, BrowserWindow } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
-import { initAgent, shutdownAgent } from './main/agent';
+import { initAgent, shutdownAgent } from './core/agent';
+import { installElectronHost } from './main/electron-host';
 import { registerAgentIpc } from './main/ipc';
 
 if (started) {
@@ -46,6 +47,7 @@ app.on('before-quit', (event) => {
 
 
 app.on('ready', async () => {
+  installElectronHost();
   registerAgentIpc();
   await initAgent();
   createWindow();

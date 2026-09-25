@@ -1,9 +1,9 @@
-import { app } from 'electron';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { host } from './host';
 
-const dataFile = (name: string) => path.join(app.getPath('userData'), name);
+const dataFile = (name: string) => path.join(host().dataDir, name);
 
 export async function readJson<T>(name: string): Promise<T | null> {
   try {
