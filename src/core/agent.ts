@@ -91,7 +91,11 @@ export async function initAgent() {
   if (credentials) startSync(credentials);
 }
 
-export async function pair(code: string, name: string): Promise<PairResult> {
+export const isPaired = () => credentials !== null;
+
+// Talks to the API and returns the new credentials, without saving or starting
+// anything. Shared by the live pair() and the admin CLI.
+async function pairRequest(code: string, name: string): Promise<{ ok: true; creds: Credentials } | { ok: false; error: string }> {
   const deviceName = name.trim();
   if (!code.trim() || !deviceName) return { ok: false, error: 'Renseigne le code et le nom du PC.' };
 
@@ -116,12 +120,47 @@ export async function pair(code: string, name: string): Promise<PairResult> {
   if (typeof body?.deviceId !== 'string' || typeof body?.token !== 'string') {
     return { ok: false, error: 'Réponse inattendue du serveur.' };
   }
+  return { ok: true, creds: { apiUrl: API_URL, deviceId: body.deviceId, deviceName, token: body.token } };
+}
 
-  credentials = { apiUrl: API_URL, deviceId: body.deviceId, deviceName, token: body.token };
+// Live pairing (loop already running, e.g. a first-run flow). Refused when the PC
+// is already paired, so it can only ever be set up once without an explicit reset.
+export async function pair(code: string, name: string): Promise<PairResult> {
+  if (credentials) return { ok: false, error: 'Ce PC est déjà appairé. Dissocie-le d’abord depuis le dashboard.' };
+  const result = await pairRequest(code, name);
+  if (!result.ok) return result;
+  credentials = result.creds;
   await saveCredentials(credentials);
   await clearAgentState();
   await clearScreenTime();
   syncState = { lastSyncAt: null, error: null };
   startSync(credentials);
   return { ok: true, status: getStatus() };
+}
+
+// Admin CLI: pair (or re-pair with --force) without starting the loop, then the
+// process exits. The running service reads the saved credentials on its next start.
+export async function pairFromCli(code: string, name: string, force: boolean): Promise<PairResult> {
+  if ((await loadCredentials()) && !force) {
+    return { ok: false, error: 'Ce PC est déjà appairé. Relance avec --force pour ré-appairer.' };
+  }
+  const result = await pairRequest(code, name);
+  if (!result.ok) return result;
+  await saveCredentials(result.creds);
+  await clearAgentState();
+  await clearScreenTime();
+  return {
+    ok: true,
+    status: { paired: true, deviceId: result.creds.deviceId, deviceName: result.creds.deviceName, sync: { lastSyncAt: null, error: null } },
+  };
+}
+
+// Admin CLI: forget the pairing (files on disk), whether or not the loop runs.
+export async function clearPairing() {
+  syncLoop?.stop();
+  syncLoop = null;
+  credentials = null;
+  await clearCredentials();
+  await clearAgentState();
+  await clearScreenTime();
 }

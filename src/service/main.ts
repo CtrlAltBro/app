@@ -1,11 +1,12 @@
 import net from 'node:net';
-import { flushNow, getStatus, initAgent, pair, shutdownAgent } from '../core/agent';
+import { flushNow, getStatus, initAgent, shutdownAgent } from '../core/agent';
 import { setHost } from '../core/host';
 import { foregroundTick } from '../core/limits';
 import { addSession } from '../core/screen-time-queue';
-import type { AgentStatus } from '../shared/agent-api';
+import type { AgentStatus, PairResult } from '../shared/agent-api';
 import type { ScreenTimeSession } from '../shared/api-types';
 import { PIPE_PATH, PipeConnection, type CoreApi, type SessionApi } from '../shared/pipe';
+import { runCli } from './cli';
 import { nodeHost, type SessionLink } from './node-host';
 
 // The core in its own Node process (milestone 2). Today it runs as the current
@@ -56,13 +57,14 @@ const session: SessionLink = {
 
 setHost(nodeHost({ dev: process.argv.includes('--dev'), session }));
 
-const server = net.createServer((socket) => {
+const server = net.createServer((socket): void => {
   const client: Client = new PipeConnection(socket);
   clients.add(client);
   console.log(`[pipe] 🔌 app de session connectée (${clients.size})`);
   client
     .handle('getStatus', () => getStatus())
-    .handle('pair', ({ code, name }) => pair(String(code), String(name)))
+    // The child must not pair from their session: pairing is an admin command.
+    .handle('pair', (): PairResult => ({ ok: false, error: "L'appairage se fait par l'administrateur du PC." }))
     .on('session', (s) => {
       if (validSession(s)) addSession({ id: s.id, app: s.app, exeName: s.exeName, title: s.title, startedAt: s.startedAt, endedAt: s.endedAt });
       else console.warn('[pipe] ⚠️ session invalide ignorée');
@@ -96,6 +98,10 @@ process.on('SIGTERM', () => void stop('SIGTERM'));
 process.on('SIGBREAK', () => void stop('Ctrl+Break'));
 
 void (async () => {
+  // Admin one-shot commands (pair / unpair / status) run and exit; no pipe server.
+  if (await runCli(process.argv.slice(2))) {
+    process.exit(process.exitCode ?? 0);
+  }
   await initAgent();
   server.listen(PIPE_PATH, () => console.log(`[service] 🚀 cœur démarré, pipe ${PIPE_PATH}`));
 })();

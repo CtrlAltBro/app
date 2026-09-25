@@ -1,0 +1,36 @@
+<!--
+  WinSW wraps plain node.exe as a Windows service, because node does not speak to
+  the Service Control Manager on its own. node.exe and service.js are copied next
+  to the wrapper by install-service.ps1, so %BASE% resolves inside the install dir.
+-->
+<service>
+  <id>CtrlAltBro</id>
+  <name>CtrlAltBro</name>
+  <description>Contrôle parental CtrlAltBro : synchronisation et application des règles.</description>
+
+  <executable>%BASE%\node.exe</executable>
+  <arguments>"%BASE%\service.js"</arguments>
+
+  <!-- Runs as Local System (SYSTEM) so the child's standard account cannot stop it. -->
+  <serviceaccount>
+    <username>NT AUTHORITY\LocalSystem</username>
+  </serviceaccount>
+
+  <startmode>Automatic</startmode>
+  <!-- Start once the network stack is up (the core talks to the API). -->
+  <depend>Tcpip</depend>
+
+  <!-- Come back up if the process ever exits unexpectedly. -->
+  <onfailure action="restart" delay="5 sec" />
+  <onfailure action="restart" delay="5 sec" />
+  <onfailure action="restart" delay="10 sec" />
+  <resetfailure>1 hour</resetfailure>
+
+  <log mode="roll-by-size">
+    <sizeThreshold>1024</sizeThreshold>
+    <keepFiles>4</keepFiles>
+  </log>
+
+  <!-- SIGINT-equivalent so the core runs its last upload + /bye before stopping. -->
+  <stoptimeout>8 sec</stoptimeout>
+</service>

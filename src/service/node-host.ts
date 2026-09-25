@@ -15,14 +15,16 @@ export type SessionLink = {
   showMessage(text: string): Promise<void>;
 };
 
-// DPAPI, current-user scope: only this Windows account (SYSTEM once installed as
-// a service) can decrypt. The real protection comes later from the data dir ACL.
+// DPAPI, machine scope: the admin pairs (writes the token), the SYSTEM service
+// reads it, so both must be able to decrypt. Machine scope means any process on
+// this PC can, so the real protection is the ACL the installer puts on dataDir
+// (SYSTEM + Administrators only) — see pitfall #4 in CLAUDE.md.
 const PROTECT = `Add-Type -AssemblyName System.Security
 $in = [Console]::In.ReadToEnd()
-[Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Protect([Text.Encoding]::UTF8.GetBytes($in), $null, 'CurrentUser'))`;
+[Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Protect([Text.Encoding]::UTF8.GetBytes($in), $null, 'LocalMachine'))`;
 const UNPROTECT = `Add-Type -AssemblyName System.Security
 $in = [Console]::In.ReadToEnd().Trim()
-[Text.Encoding]::UTF8.GetString([Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64String($in), $null, 'CurrentUser'))`;
+[Text.Encoding]::UTF8.GetString([Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64String($in), $null, 'LocalMachine'))`;
 
 // Target and arguments of each .lnk path read from stdin (JSON array), as JSON.
 const READ_SHORTCUTS = `$ErrorActionPreference = 'SilentlyContinue'
@@ -34,12 +36,18 @@ $out = foreach ($f in $files) {
 }
 ConvertTo-Json -InputObject @($out) -Compress`;
 
+// State lives here, not in the child's %APPDATA%: as a service the core runs as
+// SYSTEM, and the installer locks this folder down to SYSTEM + Administrators so
+// the child cannot read the token or edit the cached rules / counters. In dev
+// (core run as the user) the folder is created on first write, world-writable
+// until the installer applies the ACL.
+export const dataDir = () => path.join(process.env.ProgramData ?? 'C:\\ProgramData', 'CtrlAltBro');
+
 export function nodeHost({ dev, session }: { dev: boolean; session: SessionLink }): Host {
   return {
     version: __APP_VERSION__,
     isDev: dev,
-    // Same folder as the Electron app used, for now. Milestone 3: %ProgramData%\CtrlAltBro.
-    dataDir: path.join(process.env.APPDATA ?? '.', 'ctrlaltbro'),
+    dataDir: dataDir(),
     secrets: {
       available: () => process.platform === 'win32',
       encrypt: (text) => runPowerShellSync(PROTECT, text).trim(),
