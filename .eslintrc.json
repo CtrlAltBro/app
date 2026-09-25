@@ -12,5 +12,34 @@
     "plugin:import/electron",
     "plugin:import/typescript"
   ],
-  "parser": "@typescript-eslint/parser"
+  "parser": "@typescript-eslint/parser",
+  "overrides": [
+    {
+      "files": [
+        "src/core/**/*.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "electron",
+                "message": "The core must run without Electron (future Windows service): go through host() in src/core/host.ts."
+              }
+            ],
+            "patterns": [
+              {
+                "group": [
+                  "../main/*",
+                  "../main"
+                ],
+                "message": "The core must not depend on the Electron side."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
 }

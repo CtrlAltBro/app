@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { dialog } from 'electron';
 import type { Command, CommandResult } from '../shared/api-types';
+import { host } from './host';
 import { isProtected } from './protected';
 
 const run = promisify(execFile);
@@ -26,7 +26,7 @@ export async function executeCommand(command: Command): Promise<CommandResult> {
   const failed = (error: string): CommandResult => ({ id: command.id, status: 'failed', error });
 
   if (command.type === 'show_message') {
-    void dialog.showMessageBox({ type: 'info', title: 'CtrlAltBro', message: command.payload.text });
+    host().ui.message(command.payload.text);
     return done();
   }
 

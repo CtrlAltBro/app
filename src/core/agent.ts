@@ -1,10 +1,10 @@
-import { BrowserWindow, powerMonitor } from 'electron';
 import os from 'node:os';
 import type { AgentStatus, PairResult, SyncState } from '../shared/agent-api';
 import { API_URL } from './config';
 import { clearCredentials, loadCredentials, saveCredentials, type Credentials } from './credentials';
+import { host } from './host';
 import { setLimitRules, startLimits, stopLimits } from './limits';
-import { onFlushRequested, saveCurrentSession, startScreenTime, stopScreenTime } from './screen-time';
+import { clearScreenTime, loadScreenTimeQueue, persistScreenTime } from './screen-time-queue';
 import { cachedRules, clearAgentState, startSyncLoop } from './sync';
 
 // Longest we hold the app open at quit / shutdown to upload pending screen time.
@@ -20,8 +20,7 @@ export function getStatus(): AgentStatus {
 }
 
 function broadcast() {
-  const status = getStatus();
-  for (const window of BrowserWindow.getAllWindows()) window.webContents.send('agent:status', status);
+  host().statusChanged(getStatus());
 }
 
 function setSyncState(state: SyncState) {
@@ -31,7 +30,6 @@ function setSyncState(state: SyncState) {
 
 function startSync(creds: Credentials) {
   syncLoop?.stop();
-  void startScreenTime();
   // Enforce with the rules cached from the last sync, so limits apply at startup even offline.
   void cachedRules().then((rules) => startLimits(rules));
   syncLoop = startSyncLoop(creds, {
@@ -43,9 +41,14 @@ function startSync(creds: Credentials) {
     },
     onUnauthorized: () => void unpair(),
   });
-  // Session locked / PC going to sleep: upload now instead of waiting for the next batch.
-  onFlushRequested(() => void syncLoop?.flush());
+  broadcast();
 }
+
+// Session locked / PC going to sleep: upload now instead of waiting for the next batch.
+export const flushNow = () => void syncLoop?.flush();
+
+// PC resumed from sleep.
+export const syncNow = () => syncLoop?.syncNow();
 
 // App quit or Windows shutdown: keep the running session, then try to upload
 // everything within a short delay (anything left stays on disk for next start).
@@ -53,7 +56,8 @@ let shuttingDown: Promise<void> | null = null;
 
 export function shutdownAgent() {
   shuttingDown ??= (async () => {
-    await saveCurrentSession();
+    await host().ui.saveCurrentSession();
+    await persistScreenTime();
     const loop = syncLoop;
     if (!loop) return;
     console.log('[sync] 👋 fermeture → dernier envoi, puis je me déclare hors ligne');
@@ -70,10 +74,9 @@ export function shutdownAgent() {
 
 // The device was deleted from the dashboard: its token no longer works.
 async function unpair() {
-  onFlushRequested(null);
   syncLoop?.stop();
   syncLoop = null;
-  await stopScreenTime({ clear: true });
+  await clearScreenTime();
   await stopLimits();
   credentials = null;
   syncState = { lastSyncAt: null, error: null };
@@ -83,9 +86,9 @@ async function unpair() {
 }
 
 export async function initAgent() {
+  await loadScreenTimeQueue();
   credentials = await loadCredentials();
   if (credentials) startSync(credentials);
-  powerMonitor.on('resume', () => syncLoop?.syncNow());
 }
 
 export async function pair(code: string, name: string): Promise<PairResult> {
@@ -117,7 +120,7 @@ export async function pair(code: string, name: string): Promise<PairResult> {
   credentials = { apiUrl: API_URL, deviceId: body.deviceId, deviceName, token: body.token };
   await saveCredentials(credentials);
   await clearAgentState();
-  await stopScreenTime({ clear: true });
+  await clearScreenTime();
   syncState = { lastSyncAt: null, error: null };
   startSync(credentials);
   return { ok: true, status: getStatus() };

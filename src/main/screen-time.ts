@@ -4,22 +4,19 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 import { powerMonitor } from 'electron';
 import type { ScreenTimeSession } from '../shared/api-types';
-import { knownAppName } from './inventory';
-import { readJson, removeJson, writeJson } from './storage';
+import { knownAppName } from '../core/inventory';
 
-// Screen time = time an app is in the foreground while the session is unlocked and the PC awake.
-// Windows locks the session after inactivity unless a video keeps the screen on, so no idle threshold.
+// Foreground sensor, on the child's desktop. Screen time = time an app is in the
+// foreground while the session is unlocked and the PC awake. Windows locks the session
+// after inactivity unless a video keeps the screen on, so no idle threshold.
+// Finished sessions go to the core's upload queue (core/screen-time-queue.ts).
 
-const QUEUE_FILE = 'screen-time-queue.json';
 const TICK_MS = 5_000;
 // A gap longer than this between ticks means the PC slept.
 const GAP_MS = 30_000;
 // Sessions are cut so the dashboard (and daily limits) see usage while an app stays open.
 const MAX_SESSION_MS = 60 * 1000;
-const MAX_QUEUE = 10_000;
 const RESTART_DELAY_MS = 5_000;
-// Consecutive sessions closer than this (same app and title) are merged into one row.
-const MERGE_GAP_MS = 2 * TICK_MS;
 const EXE_NAME = /^[^\\/:*?"<>|]{1,255}\.exe$/;
 const WINDOWS_DIR = (process.env.SystemRoot ?? 'C:\\Windows').toLowerCase() + '\\';
 // Store apps are drawn by this host process; their window title is the app name.
@@ -59,22 +56,23 @@ export type WindowRect = { left: number; top: number; right: number; bottom: num
 type Foreground = { exePath: string; title: string; rect: WindowRect | null };
 type Current = ScreenTimeSession & { key: string; startMs: number; lastMs: number };
 
-let queue: ScreenTimeSession[] = [];
+export type SensorEvents = {
+  // A finished session, to queue for upload.
+  session(session: ScreenTimeSession): void;
+  // Every tick: the counted foreground app (null when locked, idle desktop, system UI)
+  // and the time since the previous tick. Used by the daily limits.
+  foreground(exeName: string | null, elapsedMs: number): void;
+  // Session locked or PC going to sleep: a good moment to upload.
+  leave(): void;
+};
+
+let events: SensorEvents | null = null;
 let current: Current | null = null;
 let latest: Foreground | null = null;
 let watcher: ChildProcess | null = null;
 let timer: NodeJS.Timeout | undefined;
 let restartTimer: NodeJS.Timeout | undefined;
 let lastTickMs = 0;
-let inFlight = new Set<string>();
-let flushRequested: (() => void) | null = null;
-let foregroundListener: ((exeName: string | null, elapsedMs: number) => void) | null = null;
-
-// Called every tick with the counted foreground app (null when locked, idle desktop, system UI)
-// and the time since the previous tick. Used by the daily limits.
-export function onForeground(fn: typeof foregroundListener) {
-  foregroundListener = fn;
-}
 
 // Where the foreground window was at the last tick (for the "time's up" screen).
 export const foregroundRect = () => latest?.rect ?? null;
@@ -90,38 +88,12 @@ function describe({ exePath, title }: Foreground) {
   return { key: exeName, app, exeName: EXE_NAME.test(exeName) ? exeName : undefined, title: title.slice(0, 1000) || undefined };
 }
 
-// Writes run one after another, each saving the queue as it is when its turn comes,
-// so the file on disk always ends up with the latest state.
-let writing: Promise<void> = Promise.resolve();
-
-function persist() {
-  if (queue.length > MAX_QUEUE) queue = queue.slice(-MAX_QUEUE);
-  writing = writing.catch(() => undefined).then(() => writeJson(QUEUE_FILE, queue));
-  return writing;
-}
-
 function close() {
   if (!current) return;
   const { id, app, exeName, title, startedAt, startMs, lastMs } = current;
   current = null;
   if (lastMs - startMs < 1000) return;
-  const endedAt = new Date(lastMs).toISOString();
-  // Same app and window right after the previous session: extend it instead of adding a row.
-  // Sessions already handed to a sync in progress are left alone (they may be acknowledged).
-  const prev = queue[queue.length - 1];
-  if (
-    prev &&
-    !inFlight.has(prev.id) &&
-    prev.app === app &&
-    prev.exeName === exeName &&
-    prev.title === title &&
-    startMs - Date.parse(prev.endedAt) <= MERGE_GAP_MS
-  ) {
-    prev.endedAt = endedAt;
-  } else {
-    queue.push({ id, app, exeName, title, startedAt, endedAt });
-  }
-  persist().catch((err) => console.error('Screen time queue write failed:', err));
+  events?.session({ id, app, exeName, title, startedAt, endedAt: new Date(lastMs).toISOString() });
 }
 
 function tick() {
@@ -133,7 +105,7 @@ function tick() {
 
   const locked = powerMonitor.getSystemIdleState(1) === 'locked';
   const fg = !locked && latest ? describe(latest) : null;
-  foregroundListener?.(fg?.exeName ?? null, slept ? 0 : elapsedMs);
+  events?.foreground(fg?.exeName ?? null, slept ? 0 : elapsedMs);
 
   if (current && (!fg || fg.key !== current.key || now - current.startMs >= MAX_SESSION_MS)) {
     if (!slept) current.lastMs = now;
@@ -167,9 +139,9 @@ function spawnWatcher() {
   });
 }
 
-export async function startScreenTime() {
+export function startScreenTime(handlers: SensorEvents) {
   if (process.platform !== 'win32' || watcher) return;
-  queue = (await readJson<ScreenTimeSession[]>(QUEUE_FILE)) ?? [];
+  events = handlers;
   spawnWatcher();
 
   powerMonitor.on('suspend', onSuspend);
@@ -179,22 +151,16 @@ export async function startScreenTime() {
 
 function onSuspend() {
   close();
-  // The child is leaving the PC: a good moment to upload the queue.
-  flushRequested?.();
+  events?.leave();
 }
 
-// Called on lock / sleep so the sync loop can upload right away.
-export function onFlushRequested(fn: (() => void) | null) {
-  flushRequested = fn;
-}
-
-// Closes the running session and writes the queue to disk (app quit, Windows shutdown).
-export async function saveCurrentSession() {
+// Hands the running session to the queue (app quit, Windows shutdown).
+export function saveCurrentSession() {
   close();
-  await persist();
 }
 
-export async function stopScreenTime({ clear = false } = {}) {
+// discard: drop the running session instead of queuing it (device unpaired).
+export function stopScreenTime({ discard = false } = {}) {
   clearInterval(timer);
   clearTimeout(restartTimer);
   powerMonitor.off('suspend', onSuspend);
@@ -202,26 +168,9 @@ export async function stopScreenTime({ clear = false } = {}) {
   const child = watcher;
   watcher = null;
   child?.kill();
+  if (discard) current = null;
   close();
-  if (clear) {
-    queue = [];
-    await removeJson(QUEUE_FILE);
-  }
-}
-
-export const pendingScreenTimeCount = () => queue.length;
-
-// Sessions to send with the next sync (oldest first, API accepts 2000 per call).
-// Copies, so a merge during the upload cannot change what is being sent.
-export function pendingScreenTime() {
-  const batch = queue.slice(0, 2000).map((s) => ({ ...s }));
-  inFlight = new Set(batch.map((s) => s.id));
-  return batch;
-}
-
-export async function acknowledgeScreenTime(ids: string[]) {
-  const sent = new Set(ids);
-  queue = queue.filter((s) => !sent.has(s.id));
-  inFlight = new Set();
-  await persist();
+  latest = null;
+  lastTickMs = 0;
+  events = null;
 }
