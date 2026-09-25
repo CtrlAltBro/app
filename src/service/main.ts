@@ -9,6 +9,7 @@ import { PIPE_PATH, PipeConnection, type CoreApi, type SessionApi } from '../sha
 import { runCli } from './cli';
 import { monitoredSids, nameForSid } from './monitored';
 import { nodeHost, type SessionLink } from './node-host';
+import { launchApp, loggedOnSids, syncTasks } from './session-app';
 
 // The core in its own Node process (milestone 2). Today it runs as the current
 // user from a terminal (`npm run service`); milestone 3 runs it as a SYSTEM service.
@@ -132,12 +133,34 @@ void (async () => {
   }
   await initAgent();
   const refreshMonitored = async () => {
-    monitored = new Set(await monitoredSids().catch(() => []));
+    const next = new Set(await monitoredSids().catch(() => [...monitored]));
+    if (!dev) await syncTasks(next, monitored).catch((e) => console.error('[app] synchro des tâches échouée', e));
+    monitored = next;
   };
   await refreshMonitored();
   setInterval(() => void refreshMonitored(), 60_000).unref();
   const names = await Promise.all([...monitored].map(nameForSid)).catch(() => [...monitored]);
   console.log(`[service] 👁️  comptes surveillés : ${names.length ? names.join(', ') : '(aucun)'}${dev ? ' (dev: tout compté)' : ''}`);
+
+  // Keep the session app running in each monitored, signed-in session: if the
+  // child killed it, start it again through its launch task (dev: never launch).
+  if (!dev) {
+    const relaunchAt = new Map<string, number>();
+    const RELAUNCH_COOLDOWN_MS = 20_000;
+    const supervise = async () => {
+      const on = await loggedOnSids().catch(() => new Set<string>());
+      const withApp = new Set([...monitoredClients].map((c) => clientSids.get(c)));
+      for (const sid of monitored) {
+        if (!on.has(sid) || withApp.has(sid)) continue;
+        if (Date.now() - (relaunchAt.get(sid) ?? 0) < RELAUNCH_COOLDOWN_MS) continue;
+        relaunchAt.set(sid, Date.now());
+        console.log(`[app] 🚀 (re)lancement de l'app de session pour ${await nameForSid(sid)}`);
+        await launchApp(sid).catch((e) => console.error('[app] lancement échoué', e));
+      }
+    };
+    setInterval(() => void supervise(), 10_000).unref();
+    void supervise();
+  }
   // readableAll/writableAll: the service runs as SYSTEM, so without this the pipe
   // it creates is reachable only by SYSTEM and Administrators — the child's session
   // app (a standard, medium-integrity process) could not connect. Anyone can connect

@@ -23,7 +23,9 @@ Assert-Admin
 
 $node = (Get-Command node -ErrorAction Stop).Source
 $serviceJs = Join-Path $repo '.service\service.js'
+$appPackaged = Join-Path $repo 'out\ctrlaltbro-win32-x64'
 if (-not (Test-Path $serviceJs)) { throw "Build manquant : lance 'npm run build:service' d'abord ($serviceJs)." }
+if (-not (Test-Path $appPackaged)) { throw "App manquante : lance 'npm run package' d'abord ($appPackaged)." }
 if (-not (Test-Path $WinSW)) { throw "WinSW introuvable : $WinSW" }
 
 Write-Host "→ Dossier d'installation $InstallDir"
@@ -33,6 +35,13 @@ Copy-Item $serviceJs (Join-Path $InstallDir 'service.js') -Force
 if (Test-Path "$serviceJs.map") { Copy-Item "$serviceJs.map" (Join-Path $InstallDir 'service.js.map') -Force }
 Copy-Item $WinSW (Join-Path $InstallDir 'ctrlaltbro-svc.exe') -Force
 Copy-Item (Join-Path $repo 'service\winsw\ctrlaltbro.xml') (Join-Path $InstallDir 'ctrlaltbro-svc.xml') -Force
+
+# The packaged session app the service launches in each child's session. Under
+# Program Files it inherits Users:(RX): the child can run it but not modify it.
+Write-Host "→ App de session $InstallDir\app"
+$appDir = Join-Path $InstallDir 'app'
+if (Test-Path $appDir) { Remove-Item -Recurse -Force $appDir }
+Copy-Item $appPackaged $appDir -Recurse -Force
 
 # State dir readable/writable only by SYSTEM and Administrators: the child (a
 # standard user) cannot read the device token nor edit the cached rules / counters.
