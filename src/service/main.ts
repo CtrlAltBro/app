@@ -7,6 +7,7 @@ import type { AgentStatus, PairResult } from '../shared/agent-api';
 import type { ScreenTimeSession } from '../shared/api-types';
 import { PIPE_PATH, PipeConnection, type CoreApi, type SessionApi } from '../shared/pipe';
 import { runCli } from './cli';
+import { monitoredSids, nameForSid } from './monitored';
 import { nodeHost, type SessionLink } from './node-host';
 
 // The core in its own Node process (milestone 2). Today it runs as the current
@@ -103,6 +104,9 @@ void (async () => {
     process.exit(process.exitCode ?? 0);
   }
   await initAgent();
+  const sids = await monitoredSids().catch(() => []);
+  const names = await Promise.all(sids.map(nameForSid)).catch(() => sids);
+  console.log(`[service] 👁️  comptes surveillés : ${names.length ? names.join(', ') : '(aucun)'}`);
   // readableAll/writableAll: the service runs as SYSTEM, so without this the pipe
   // it creates is reachable only by SYSTEM and Administrators — the child's session
   // app (a standard, medium-integrity process) could not connect. Anyone can connect
