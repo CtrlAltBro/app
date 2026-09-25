@@ -76,6 +76,10 @@ function connect() {
         showTimeUp(snapshot, text);
         snapshot = null;
       })
+      .handle('lock', async () => {
+        // Lock this (the child's) desktop.
+        await run('rundll32.exe', ['user32.dll,LockWorkStation'], { windowsHide: true });
+      })
       .handle('snapshotForeground', async () => {
         snapshot = await snapshotForeground().catch(() => null);
       })
