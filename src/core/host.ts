@@ -1,10 +1,11 @@
 import type { AgentStatus } from '../shared/agent-api';
+import type { TimeUpText } from '../shared/pipe';
 
 // Everything the core needs from the process it runs in. The core never imports
-// Electron: today the Electron main process provides this (main/electron-host.ts);
-// later the Windows service will, forwarding UI requests to the session app.
+// Electron: the service provides it (service/node-host.ts) and forwards UI
+// requests to the session app over the pipe.
 
-export type TimeUpText = { title: string; app: string; detail: string };
+export type Shortcut = { target?: string; args?: string };
 
 export type Host = {
   version: string;
@@ -17,7 +18,8 @@ export type Host = {
     encrypt(text: string): string;
     decrypt(data: string): string;
   };
-  readShortcut(file: string): { target?: string; args?: string };
+  // Target and arguments of .lnk files, in the same order (null: unreadable).
+  readShortcuts(files: string[]): Promise<(Shortcut | null)[]>;
   // Pairing or sync status changed.
   statusChanged(status: AgentStatus): void;
   // Things only the child's desktop can do.

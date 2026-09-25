@@ -1,8 +1,7 @@
 import { app, BrowserWindow } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
-import { initAgent, shutdownAgent } from './core/agent';
-import { installElectronHost } from './main/electron-host';
+import { closeSession, connectCore } from './main/core-client';
 import { registerAgentIpc } from './main/ipc';
 
 if (started) {
@@ -30,26 +29,25 @@ const createWindow = () => {
 
   if (!app.isPackaged) mainWindow.webContents.openDevTools({ mode: 'detach' });
 
-  // Windows shutdown, restart or log off: best effort, Windows may not wait for the upload.
-  mainWindow.on('session-end', () => void shutdownAgent());
+  // Windows shutdown, restart or log off: hand the running screen-time session to the core.
+  mainWindow.on('session-end', () => void closeSession());
 };
 
-// Upload pending screen time before quitting (bounded by a short timeout).
+// Hand the running screen-time session to the core before quitting.
 let quitReady = false;
 app.on('before-quit', (event) => {
   if (quitReady) return;
   event.preventDefault();
-  void shutdownAgent().finally(() => {
+  void closeSession().finally(() => {
     quitReady = true;
     app.quit();
   });
 });
 
 
-app.on('ready', async () => {
-  installElectronHost();
+app.on('ready', () => {
   registerAgentIpc();
-  await initAgent();
+  connectCore();
   createWindow();
 });
 

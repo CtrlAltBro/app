@@ -20,7 +20,8 @@ export async function loadCredentials(): Promise<Credentials | null> {
     const { encryptedToken, ...rest } = stored;
     return { ...rest, token: host().secrets.decrypt(encryptedToken) };
   } catch (err) {
-    console.error('Stored device token cannot be decrypted; pairing again is required.', err);
+    const reason = (err as Error).message.split('\n')[0];
+    console.error('Stored device token cannot be decrypted; pairing again is required.', reason);
     return null;
   }
 }

@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type { InstalledApp } from '../shared/api-types';
-import { host } from './host';
+import { host, type Shortcut } from './host';
 
 const run = promisify(execFile);
 
@@ -61,29 +61,28 @@ function toApp({ exePath, name }: Candidate): InstalledApp | null {
 const expandEnv = (value: string) => value.replace(/%([^%]+)%/g, (m, name: string) => process.env[name] ?? m);
 
 async function fromStartMenu(): Promise<Candidate[]> {
-  const found: Candidate[] = [];
+  const files: string[] = [];
   for (const dir of START_MENUS) {
-    let files: string[];
     try {
-      files = await fs.readdir(dir, { recursive: true });
+      const entries = await fs.readdir(dir, { recursive: true });
+      for (const file of entries) if (file.toLowerCase().endsWith('.lnk')) files.push(path.join(dir, file));
     } catch {
       continue;
     }
-    for (const file of files) {
-      if (!file.toLowerCase().endsWith('.lnk')) continue;
-      let link: { target?: string; args?: string };
-      try {
-        link = host().readShortcut(path.join(dir, file));
-      } catch {
-        continue;
-      }
-      const name = path.basename(file, path.extname(file));
-      // Squirrel apps (Discord, Teams…) start through Update.exe --processStart App.exe.
-      const squirrel = /--processStart\s+"?([^"\s]+\.exe)"?/i.exec(link.args ?? '');
-      if (squirrel) found.push({ exePath: squirrel[1], name });
-      else if (link.target?.toLowerCase().endsWith('.exe')) found.push({ exePath: expandEnv(link.target), name });
-    }
   }
+  const links: (Shortcut | null)[] = await host()
+    .readShortcuts(files)
+    .catch(() => []);
+  const found: Candidate[] = [];
+  files.forEach((file, i) => {
+    const link = links[i];
+    if (!link) return;
+    const name = path.basename(file, path.extname(file));
+    // Squirrel apps (Discord, Teams…) start through Update.exe --processStart App.exe.
+    const squirrel = /--processStart\s+"?([^"\s]+\.exe)"?/i.exec(link.args ?? '');
+    if (squirrel) found.push({ exePath: squirrel[1], name });
+    else if (link.target?.toLowerCase().endsWith('.exe')) found.push({ exePath: expandEnv(link.target), name });
+  });
   return found;
 }
 
