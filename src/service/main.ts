@@ -33,6 +33,8 @@ function validSession(s: ScreenTimeSession) {
 }
 
 const clients = new Set<Client>();
+// SID each connected session app runs as (from its 'hello'), for part 2 filtering.
+const clientSids = new Map<Client, string>();
 // UI requests go to the most recently connected session app.
 const latest = () => [...clients].at(-1);
 
@@ -66,6 +68,15 @@ const server = net.createServer((socket): void => {
     .handle('getStatus', () => getStatus())
     // The child must not pair from their session: pairing is an admin command.
     .handle('pair', (): PairResult => ({ ok: false, error: "L'appairage se fait par l'administrateur du PC." }))
+    .on('hello', ({ sid }) => {
+      clientSids.set(client, String(sid));
+      void monitoredSids()
+        .then(async (sids) => {
+          const watched = sids.includes(String(sid));
+          console.log(`[pipe] 👤 session app pour ${await nameForSid(String(sid))} — ${watched ? 'surveillée' : 'non surveillée'}`);
+        })
+        .catch(() => undefined);
+    })
     .on('session', (s) => {
       if (validSession(s)) addSession({ id: s.id, app: s.app, exeName: s.exeName, title: s.title, startedAt: s.startedAt, endedAt: s.endedAt });
       else console.warn('[pipe] ⚠️ session invalide ignorée');
@@ -76,6 +87,7 @@ const server = net.createServer((socket): void => {
     .on('leave', flushNow);
   socket.on('close', () => {
     clients.delete(client);
+    clientSids.delete(client);
     console.log(`[pipe] 🔌 app de session déconnectée (${clients.size})`);
   });
 });

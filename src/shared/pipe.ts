@@ -17,6 +17,10 @@ export type CoreApi = {
     pair: [{ code: string; name: string }, PairResult];
   };
   events: {
+    // Sent first on connect: which Windows account this session app runs as, so
+    // the service can tell the child's session from the parent's. Advisory for now;
+    // hardened in part 2 once the service launches the app into a known session.
+    hello: { sid: string };
     session: ScreenTimeSession;
     foreground: { exeName: string | null; elapsedMs: number };
     leave: void;
