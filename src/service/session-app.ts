@@ -77,8 +77,24 @@ export async function loggedOnSids(): Promise<Set<string>> {
   );
 }
 
-// Make the set of launch tasks match the monitored accounts.
+// Lowercased .exe names currently running under one account (for the limit fallback
+// when the session app is down). tasklist filters by USERNAME = COMPUTER\user.
+export async function runningExesForUser(user: string): Promise<Set<string>> {
+  const who = `${process.env.COMPUTERNAME ?? ''}\\${user}`;
+  const { stdout } = await run('tasklist.exe', ['/FI', `USERNAME eq ${who}`, '/FO', 'CSV', '/NH'], { windowsHide: true }).catch(
+    () => ({ stdout: '' }),
+  );
+  const exes = new Set<string>();
+  for (const line of stdout.split(/\r?\n/)) {
+    const m = /^"([^"]+\.exe)"/i.exec(line.trim());
+    if (m) exes.add(m[1].toLowerCase());
+  }
+  return exes;
+}
+
+// Make the set of launch tasks match the monitored accounts. ensureTask is
+// idempotent, so calling it every refresh also restores a task a child deleted.
 export async function syncTasks(monitored: Set<string>, previous: Set<string>) {
-  for (const sid of monitored) if (!previous.has(sid)) await ensureTask(sid).catch((e) => console.error('[app] tâche création échouée', e));
+  for (const sid of monitored) await ensureTask(sid).catch((e) => console.error('[app] tâche création échouée', e));
   for (const sid of previous) if (!monitored.has(sid)) await removeTask(sid);
 }

@@ -100,7 +100,23 @@ export function foregroundTick(exeName: string | null, elapsedMs: number) {
   if (!started) return;
   rolloverIfNewDay();
   if (!exeName) return; // locked, idle desktop, system UI, or a Store app (no exe)
+  account(exeName, elapsedMs);
+}
 
+// Fallback from the service when the session app (foreground sensor) is down: the
+// service counts the time a limited exe is *running* in the child's session. Coarser
+// than foreground time, but untamperable — killing the app never buys time.
+export function runningTick(exeName: string, elapsedMs: number) {
+  if (!started) return;
+  rolloverIfNewDay();
+  account(exeName, elapsedMs);
+}
+
+// Exe names that carry a rule, so the service only counts those in the fallback.
+export const ruledExes = () => new Set(rules.map((r) => r.exeName));
+
+// Add elapsed time to an app's daily counter and enforce its rule.
+function account(exeName: string, elapsedMs: number) {
   // Count every app, not only limited ones: a limit added mid-day must see the
   // time already spent today, like the dashboard does.
   const used = (usage.ms[exeName] = (usage.ms[exeName] ?? 0) + elapsedMs);

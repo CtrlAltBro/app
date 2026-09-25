@@ -1,7 +1,7 @@
 import net from 'node:net';
 import { flushNow, getStatus, initAgent, shutdownAgent } from '../core/agent';
 import { setHost } from '../core/host';
-import { foregroundTick, setEnforcementUser } from '../core/limits';
+import { foregroundTick, ruledExes, runningTick, setEnforcementUser } from '../core/limits';
 import { addSession } from '../core/screen-time-queue';
 import type { AgentStatus, PairResult } from '../shared/agent-api';
 import type { ScreenTimeSession } from '../shared/api-types';
@@ -9,7 +9,7 @@ import { PIPE_PATH, PipeConnection, type CoreApi, type SessionApi } from '../sha
 import { runCli } from './cli';
 import { monitoredSids, nameForSid } from './monitored';
 import { nodeHost, type SessionLink } from './node-host';
-import { launchApp, loggedOnSids, syncTasks } from './session-app';
+import { launchApp, loggedOnSids, runningExesForUser, syncTasks } from './session-app';
 
 // The core in its own Node process (milestone 2). Today it runs as the current
 // user from a terminal (`npm run service`); milestone 3 runs it as a SYSTEM service.
@@ -160,6 +160,29 @@ void (async () => {
     };
     setInterval(() => void supervise(), 10_000).unref();
     void supervise();
+
+    // Limit fallback: while a monitored session has no connected app (its foreground
+    // sensor is down), count the running time of each ruled exe and enforce it, so
+    // killing the app never pauses the limits. When the app is up, the foreground
+    // sensor counts instead, so this stays off to avoid double counting.
+    const FALLBACK_MS = 20_000;
+    const fallback = async () => {
+      const ruled = ruledExes();
+      if (!ruled.size) return;
+      const on = await loggedOnSids().catch(() => new Set<string>());
+      const withApp = new Set([...monitoredClients].map((c) => clientSids.get(c)));
+      for (const sid of monitored) {
+        if (!on.has(sid) || withApp.has(sid)) continue;
+        const name = await nameForSid(sid);
+        const running = await runningExesForUser(name);
+        const hits = [...ruled].filter((exe) => running.has(exe));
+        if (!hits.length) continue;
+        console.log(`[limits] 🛟 app absente pour ${name}, comptage secours : ${hits.join(', ')}`);
+        setEnforcementUser(name);
+        for (const exe of hits) runningTick(exe, FALLBACK_MS);
+      }
+    };
+    setInterval(() => void fallback(), FALLBACK_MS).unref();
   }
   // readableAll/writableAll: the service runs as SYSTEM, so without this the pipe
   // it creates is reachable only by SYSTEM and Administrators — the child's session
