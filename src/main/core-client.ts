@@ -1,10 +1,24 @@
+import { execFile } from 'node:child_process';
 import net from 'node:net';
+import { promisify } from 'node:util';
 import { BrowserWindow, dialog } from 'electron';
 import type { AgentStatus, PairResult } from '../shared/agent-api';
 import type { ScreenTimeSession } from '../shared/api-types';
 import { PIPE_PATH, PipeConnection, type CoreApi, type SessionApi } from '../shared/pipe';
 import { saveCurrentSession, startScreenTime, stopScreenTime } from './screen-time';
 import { showTimeUp, snapshotForeground, type Snapshot } from './time-up';
+
+const run = promisify(execFile);
+
+// SID of the account this app runs as, resolved once. Lets the core tell the
+// child's session apart from the parent's.
+let sidPromise: Promise<string | null> | undefined;
+function ownSid() {
+  sidPromise ??= run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '[Security.Principal.WindowsIdentity]::GetCurrent().User.Value'], { windowsHide: true })
+    .then(({ stdout }) => stdout.trim() || null)
+    .catch(() => null);
+  return sidPromise;
+}
 
 // The session app talks to the core (service) over the named pipe: it shows the
 // status, forwards what the foreground sensor sees, and does the UI the core asks for.
@@ -69,6 +83,8 @@ function connect() {
     core = conn;
     loggedDown = false;
     console.log('[pipe] 🔌 connecté au cœur');
+    // Tell the core which account we run as, so it can tell the child from the parent.
+    void ownSid().then((sid) => sid && conn === core && conn.emit('hello', { sid }));
     for (const session of backlog.splice(0)) conn.emit('session', session);
     resolveConnected(conn);
     conn.request('getStatus').then(setStatus, () => undefined);

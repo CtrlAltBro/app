@@ -1,0 +1,3 @@
+// 32x32 tray icon (indigo disc + white ring), embedded so packaging needs no asset.
+export const TRAY_ICON_PNG =
+  'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAA40lEQVR42tVX0QnEIAzthyu4Qkcp/t0gmcGlOoMz3AYH3eIawQMprUmsJTnh/YjJe5qoyTT923gtH48ICEDEAihz/ilSV0gS4ksglbVuFHl2tjGIj8g2cPeo1w7iI1ZxaNBgRrwHkP+Qfc2SnY8kr0V4joDmsVODCgcn4brJmSKgddU2DjFXYON2ONHuBbvjroUzAekuucAmnWX+EHKBra8FhJaT3ngTAgIZ/ysH3OwnBEAtICoIiKYEqIdAPQl1r6H6Q2TlKdb9jNS/YxMFiYmSTL0oNVGWm2hMzLRmJprTJ8cOeqiMwsMYel4AAAAASUVORK5CYII=';
