@@ -46,6 +46,9 @@ async function currentDebugger(exeName: string): Promise<string | null> {
 
 // Stop `exeName` from launching (idempotent). Refuses protected/system exes and
 // won't overwrite a Debugger someone else set (e.g. a real debugging session).
+// Note: IFEO catches classic Win32 exes (browsers, games, most apps) but NOT
+// Store/UWP apps (their activation bypasses it); those are still held down by the
+// fallback kill-on-sight, just not prevented from relaunching (AppLocker later).
 export async function blockLaunch(exeName: string) {
   const exe = exeName.toLowerCase();
   if (isProtected(exe)) return;
