@@ -12,7 +12,7 @@ Parental-control agent that runs on the child's Windows PC. Pairs with an accoun
 
 ## Layout
 
-`src/core/` is the agent logic and never imports Electron (eslint rule): it is what will run in the Windows service. What it needs from its process (version, data dir, token encryption, shortcuts, status updates, UI on the child's desktop) goes through `host()` (`src/core/host.ts`). `src/service/` runs the core in plain Node (`npm run service`, bundled by esbuild into `.service/`), today as the current user, later as the SYSTEM service. `src/main/` is the Electron session app: a client of the core over the named pipe `\.\pipe\ctrlaltbro` (`src/shared/pipe.ts`), holding the desktop-only parts (foreground sensor, windows).
+`src/core/` is the agent logic and never imports Electron (eslint rule): it is what will run in the Windows service. What it needs from its process (version, data dir, token encryption, shortcuts, status updates, UI on the child's desktop) goes through `host()` (`src/core/host.ts`). `src/service/` runs the core in plain Node (`npm run service`, bundled by esbuild into `.service/`), today as the current user, later as the SYSTEM service. `src/main/` is the Electron session app: a client of the core over the named pipe `\\.\pipe\ctrlaltbro` (`src/shared/pipe.ts`), holding the desktop-only parts (foreground sensor, windows).
 
 | Path | Role |
 | --- | --- |
