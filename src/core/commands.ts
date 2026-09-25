@@ -26,8 +26,12 @@ export async function executeCommand(command: Command): Promise<CommandResult> {
   const failed = (error: string): CommandResult => ({ id: command.id, status: 'failed', error });
 
   if (command.type === 'show_message') {
-    host().ui.message(command.payload.text);
-    return done();
+    try {
+      await host().ui.message(command.payload.text);
+      return done();
+    } catch (e) {
+      return failed((e as Error).message);
+    }
   }
 
   if (process.platform !== 'win32') return failed(`« ${command.type} » n'est pas supporté sur ${process.platform}`);

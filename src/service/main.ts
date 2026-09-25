@@ -45,7 +45,12 @@ const session: SessionLink = {
   },
   async request(type) {
     const client = latest();
-    if (client) await (client.request as (t: string) => Promise<void>)(type);
+    if (client) await client.request(type);
+  },
+  async showMessage(text) {
+    const client = latest();
+    if (!client) throw new Error("Service actif, mais l'app CtrlAltBro n'est pas ouverte sur le PC");
+    await client.request('message', { text });
   },
 };
 
