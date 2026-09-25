@@ -2,7 +2,10 @@ import path from 'node:path';
 import type { Host, Shortcut } from '../core/host';
 import type { AgentStatus } from '../shared/agent-api';
 import type { SessionApi, TimeUpText } from '../shared/pipe';
+import { allowAll, allowLaunch, blockLaunch } from './ifeo';
 import { runPowerShell, runPowerShellSync } from './powershell';
+
+const noGuard = { async block() {}, async allow() {}, async allowAll() {} };
 
 declare const __APP_VERSION__: string;
 
@@ -65,5 +68,7 @@ export function nodeHost({ dev, session }: { dev: boolean; session: SessionLink 
       showTimeUp: (text: TimeUpText) => session.emit('timeUp', text),
       saveCurrentSession: () => session.request('saveCurrentSession'),
     },
+    // In dev (core run as the user) we don't touch the machine-wide IFEO keys.
+    launchGuard: dev ? noGuard : { block: blockLaunch, allow: allowLaunch, allowAll },
   };
 }
