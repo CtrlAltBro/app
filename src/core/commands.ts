@@ -9,12 +9,20 @@ const run = promisify(execFile);
 // taskkill exit code when no process matches the image name.
 const TASKKILL_NOT_FOUND = 128;
 
-// Closes every process with this image name (and its child processes).
-export async function killApp(exeName: string): Promise<'killed' | 'not-running' | 'protected'> {
+// Closes every process with this image name (and its child processes). With
+// ownerUser, only that account's processes are closed — so a limit on the child
+// never kills the same app in the parent's session (taskkill /FI "USERNAME eq …").
+export async function killApp(
+  exeName: string,
+  opts: { ownerUser?: string } = {},
+): Promise<'killed' | 'not-running' | 'protected'> {
   if (isProtected(exeName)) return 'protected';
+  const args = ['/IM', exeName, '/F', '/T'];
+  if (opts.ownerUser) args.push('/FI', `USERNAME eq ${opts.ownerUser}`);
   try {
-    await run('taskkill.exe', ['/IM', exeName, '/F', '/T'], { windowsHide: true });
-    return 'killed';
+    const { stdout } = await run('taskkill.exe', args, { windowsHide: true });
+    // With a filter that matches nothing taskkill still exits 0 but kills nothing.
+    return /SUCCESS/i.test(stdout) ? 'killed' : 'not-running';
   } catch (e) {
     if ((e as { code?: number }).code === TASKKILL_NOT_FOUND) return 'not-running';
     throw e;

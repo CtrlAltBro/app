@@ -1,7 +1,7 @@
 import net from 'node:net';
 import { flushNow, getStatus, initAgent, shutdownAgent } from '../core/agent';
 import { setHost } from '../core/host';
-import { foregroundTick } from '../core/limits';
+import { foregroundTick, setEnforcementUser } from '../core/limits';
 import { addSession } from '../core/screen-time-queue';
 import type { AgentStatus, PairResult } from '../shared/agent-api';
 import type { ScreenTimeSession } from '../shared/api-types';
@@ -32,9 +32,17 @@ function validSession(s: ScreenTimeSession) {
   );
 }
 
+const dev = process.argv.includes('--dev');
 const clients = new Set<Client>();
-// SID each connected session app runs as (from its 'hello'), for part 2 filtering.
+// SID each connected session app runs as (from its 'hello').
 const clientSids = new Map<Client, string>();
+// Clients whose session is watched: their screen time / foreground drive the agent,
+// and limits may close their apps. In dev every client counts (one-user loop).
+const monitoredClients = new Set<Client>();
+const isMonitored = (client: Client) => dev || monitoredClients.has(client);
+// Cached set of monitored SIDs, refreshed from config so a `monitor` change is picked up.
+let monitored = new Set<string>();
+
 // UI requests go to the most recently connected session app.
 const latest = () => [...clients].at(-1);
 
@@ -69,25 +77,32 @@ const server = net.createServer((socket): void => {
     // The child must not pair from their session: pairing is an admin command.
     .handle('pair', (): PairResult => ({ ok: false, error: "L'appairage se fait par l'administrateur du PC." }))
     .on('hello', ({ sid }) => {
-      clientSids.set(client, String(sid));
-      void monitoredSids()
-        .then(async (sids) => {
-          const watched = sids.includes(String(sid));
-          console.log(`[pipe] 👤 session app pour ${await nameForSid(String(sid))} — ${watched ? 'surveillée' : 'non surveillée'}`);
-        })
-        .catch(() => undefined);
+      const id = String(sid);
+      clientSids.set(client, id);
+      const watched = monitored.has(id);
+      if (watched) monitoredClients.add(client);
+      void nameForSid(id).then((name) => {
+        console.log(`[pipe] 👤 session app pour ${name} — ${dev ? 'dev (comptée)' : watched ? 'surveillée' : 'non surveillée (ignorée)'}`);
+        // Limits close only this account's apps, never the parent's.
+        if (watched && !dev) setEnforcementUser(name);
+      });
     })
     .on('session', (s) => {
+      if (!isMonitored(client)) return; // ignore the parent's session
       if (validSession(s)) addSession({ id: s.id, app: s.app, exeName: s.exeName, title: s.title, startedAt: s.startedAt, endedAt: s.endedAt });
       else console.warn('[pipe] ⚠️ session invalide ignorée');
     })
-    .on('foreground', ({ exeName, elapsedMs }) =>
-      foregroundTick(typeof exeName === 'string' ? exeName : null, Math.max(0, Math.min(Number(elapsedMs) || 0, 60_000))),
-    )
-    .on('leave', flushNow);
+    .on('foreground', ({ exeName, elapsedMs }) => {
+      if (!isMonitored(client)) return; // ignore the parent's session
+      foregroundTick(typeof exeName === 'string' ? exeName : null, Math.max(0, Math.min(Number(elapsedMs) || 0, 60_000)));
+    })
+    .on('leave', () => {
+      if (isMonitored(client)) flushNow();
+    });
   socket.on('close', () => {
     clients.delete(client);
     clientSids.delete(client);
+    monitoredClients.delete(client);
     console.log(`[pipe] 🔌 app de session déconnectée (${clients.size})`);
   });
 });
@@ -116,9 +131,13 @@ void (async () => {
     process.exit(process.exitCode ?? 0);
   }
   await initAgent();
-  const sids = await monitoredSids().catch(() => []);
-  const names = await Promise.all(sids.map(nameForSid)).catch(() => sids);
-  console.log(`[service] 👁️  comptes surveillés : ${names.length ? names.join(', ') : '(aucun)'}`);
+  const refreshMonitored = async () => {
+    monitored = new Set(await monitoredSids().catch(() => []));
+  };
+  await refreshMonitored();
+  setInterval(() => void refreshMonitored(), 60_000).unref();
+  const names = await Promise.all([...monitored].map(nameForSid)).catch(() => [...monitored]);
+  console.log(`[service] 👁️  comptes surveillés : ${names.length ? names.join(', ') : '(aucun)'}${dev ? ' (dev: tout compté)' : ''}`);
   // readableAll/writableAll: the service runs as SYSTEM, so without this the pipe
   // it creates is reachable only by SYSTEM and Administrators — the child's session
   // app (a standard, medium-integrity process) could not connect. Anyone can connect

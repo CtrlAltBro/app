@@ -32,6 +32,14 @@ type Usage = {
 let usage: Usage = { day: today(), ms: {} };
 let rules: AppRule[] = [];
 let started = false;
+// Account whose apps limits may close (the monitored child). null = don't scope,
+// i.e. any session — used only in dev when running everything as one user.
+let enforcementUser: string | null = null;
+
+// Set by the service to the monitored child's Windows account name.
+export function setEnforcementUser(name: string | null) {
+  enforcementUser = name;
+}
 // exeNames already warned today, so the "almost out of time" nag fires only once.
 const warned = new Set<string>();
 // exeName → last time we killed it, for the cooldown above.
@@ -71,7 +79,8 @@ function enforce(exeName: string, minutes: number | null) {
   void (async () => {
     // Picture the window before it disappears, for the "time's up" screen.
     await host().ui.snapshotForeground().catch(() => undefined);
-    const outcome = await killApp(exeName);
+    // Only close the app in the monitored child's session, never the parent's.
+    const outcome = await killApp(exeName, { ownerUser: enforcementUser ?? undefined });
     if (outcome === 'protected') return; // system app we must not touch
     console.log(`[limits] ✋ ${exeName} → ${outcome} (${minutes === null ? 'bloquée' : `limite ${minutes} min`})`);
     host().ui.showTimeUp(
