@@ -10,7 +10,9 @@ declare const __APP_VERSION__: string;
 export type SessionLink = {
   broadcast(status: AgentStatus): void;
   emit<K extends keyof SessionApi['events']>(type: K, data: SessionApi['events'][K]): void;
-  request<K extends keyof SessionApi['requests']>(type: K): Promise<void>;
+  request(type: 'snapshotForeground' | 'saveCurrentSession'): Promise<void>;
+  // Throws when no session app is connected.
+  showMessage(text: string): Promise<void>;
 };
 
 // DPAPI, current-user scope: only this Windows account (SYSTEM once installed as
@@ -50,7 +52,7 @@ export function nodeHost({ dev, session }: { dev: boolean; session: SessionLink 
     },
     statusChanged: (status) => session.broadcast(status),
     ui: {
-      message: (text) => session.emit('message', { text }),
+      message: (text) => session.showMessage(text),
       snapshotForeground: () => session.request('snapshotForeground'),
       showTimeUp: (text: TimeUpText) => session.emit('timeUp', text),
       saveCurrentSession: () => session.request('saveCurrentSession'),

@@ -114,7 +114,9 @@ export function foregroundTick(exeName: string | null, elapsedMs: number) {
     warned.add(exeName);
     const leftMin = Math.max(1, Math.round((limitMs - used) / 60_000));
     console.log(`[limits] ⏳ ${exeName} : encore ${leftMin} min`);
-    host().ui.message(`${label(exeName)} : encore ${leftMin} min aujourd'hui.`);
+    void host()
+      .ui.message(`${label(exeName)} : encore ${leftMin} min aujourd'hui.`)
+      .catch(() => undefined);
   }
 }
 

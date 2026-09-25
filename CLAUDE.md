@@ -12,13 +12,16 @@ Parental-control agent that runs on the child's Windows PC. Pairs with an accoun
 
 ## Layout
 
-`src/core/` is the agent logic and never imports Electron (eslint rule): it is what will run in the Windows service. What it needs from its process (version, data dir, token encryption, shortcuts, status updates, UI on the child's desktop) goes through `host()` (`src/core/host.ts`). `src/main/` is the Electron side (session app): it implements the host and holds the desktop-only parts.
+`src/core/` is the agent logic and never imports Electron (eslint rule): it is what will run in the Windows service. What it needs from its process (version, data dir, token encryption, shortcuts, status updates, UI on the child's desktop) goes through `host()` (`src/core/host.ts`). `src/service/` runs the core in plain Node (`npm run service`, bundled by esbuild into `.service/`), today as the current user, later as the SYSTEM service. `src/main/` is the Electron session app: a client of the core over the named pipe `\.\pipe\ctrlaltbro` (`src/shared/pipe.ts`), holding the desktop-only parts (foreground sensor, windows).
 
 | Path | Role |
 | --- | --- |
-| `src/main.ts` | Electron entry: `installElectronHost()`, window, `initAgent()`, IPC, `shutdownAgent()` on quit / Windows session end |
+| `src/main.ts` | Electron entry: window, IPC, `connectCore()`; on quit / Windows session end, hands the running screen-time session to the core |
 | `src/core/host.ts` | The `Host` interface the core runs against, `setHost()` / `host()` |
-| `src/main/electron-host.ts` | Electron implementation of `Host` (safeStorage, userData, dialogs, time-up screen) + wiring: foreground sensor → core (sessions to the queue, ticks to limits, lock → upload) while paired, resume → sync |
+| `src/service/main.ts` | Core process: `setHost(nodeHost)`, pipe server (validates screen-time sessions from the pipe), last upload + `/bye` on Ctrl+C |
+| `src/service/node-host.ts`, `powershell.ts` | Node `Host`: DPAPI token encryption and shortcut reading through PowerShell (input on stdin), UI requests forwarded to the connected session app |
+| `src/shared/pipe.ts` | Pipe protocol: JSON lines, typed requests (with reply) and events, both ways |
+| `src/main/core-client.ts` | Session app side of the pipe: reconnects every 2 s, relays status to the window, forwards the foreground sensor while paired (sessions buffered while the core is down), shows messages / time-up screen on request |
 | `src/core/agent.ts` | Agent state (paired / sync status), pairing, unpair on 401, reports status to the host, starts sync + limits |
 | `src/main/ipc.ts` | IPC handlers behind `window.agent` (`agent:getStatus`, `agent:pair`), validates renderer input |
 | `src/core/sync.ts` | Heartbeat loop: `/ping` every 30 s (KV only, cheap). A full `/sync` runs only on `rev` change (command/rule), pending command results, a screen-time batch (every 15 min idle), or fast mode (parent watching → 15 s), plus a forced upload on session lock / sleep. On app quit or Windows session end (`shutdownAgent`, max 4 s): last upload, then `/bye` so the dashboard shows the PC offline at once. Backoff on error; resync on resume; persists rules + pending results + handled command ids + last inventory hash |
@@ -54,7 +57,7 @@ Parental-control agent that runs on the child's Windows PC. Pairs with an accoun
 - **Hyper-V VM** (`WinDev2407Eval`, Windows, reached over SSH from VS Code): a clone of this repo where the agent is developed and run. This is where anything touching the registry, processes or admin rights gets tested, never on the host.
 - The agent on the VM needs `.env.local` (not in git, copy `.env.example`) with `CTRLALTBRO_API_URL=http://<host LAN IP>:5173`. Check with `curl http://<host LAN IP>:5173` from the VM.
 - Take a Hyper-V checkpoint of the VM before testing anything that writes to `HKLM`, kills processes, or installs a service.
-- Launching the agent from an SSH shell runs it in session 0 (no visible window): start it from the VM desktop.
+- Run the agent as two processes, from the VM desktop: `npm run service` (core, rebuilt at each run) then `npm start` (Electron session app). Launching Electron from an SSH shell runs it in session 0 (no visible window).
 - To test as SYSTEM without installing a service: `psexec -s -i cmd` (Sysinternals) opens a SYSTEM shell on the desktop.
 - Test the tamper cases from a **second, standard Windows account** on the VM (the "child"), not from the admin account.
 
@@ -140,10 +143,10 @@ The child must not be able to close, kill or uninstall the agent, nor tamper wit
 
 ### Milestones (each one testable, VM checkpoint before 3, 4, 5)
 
-- [ ] 1. **Extract the core from Electron, no behavior change.** `sync`, `credentials`, `storage`, `limits`, `commands`, `inventory` stop importing `electron`; what they need (`app.getVersion`, `safeStorage`, `dialog`, `powerMonitor`, UI requests) goes through a small interface. The app works exactly as before.
-- [ ] 2. **Core as a separate Node process, Electron app as a pipe client** (status, foreground ticks, UI requests). Everything still runs as the current user, easy to debug.
+- [x] 1. **Extract the core from Electron, no behavior change.** `sync`, `credentials`, `storage`, `limits`, `commands`, `inventory` stop importing `electron`; what they need (`app.getVersion`, `safeStorage`, `dialog`, `powerMonitor`, UI requests) goes through a small interface. The app works exactly as before.
+- [x] 2. **Core as a separate Node process, Electron app as a pipe client** (status, foreground ticks, UI requests). Everything still runs as the current user, easy to debug.
 - [ ] 3. **Core as a SYSTEM service via WinSW**, state in `%ProgramData%\CtrlAltBro` with the right ACL, monitored SIDs, per-SID counters, re-pairing refused while paired, pairing through an admin command. Tested with `psexec` then as a real service.
-- [ ] 4. **Session app lifecycle:** start at logon, heartbeat, relaunch when killed; close button hides the window (`close` → `preventDefault()` + `hide()`), `Tray` icon without "Quitter" (or behind a parent PIN), `app.requestSingleInstanceLock()`, `skipTaskbar` while hidden; fallbacks for lock (`tsdiscon`) and limits (running-process counting + IFEO until midnight); tick cross-check.
+- [ ] 4. **Session app lifecycle:** start at logon, heartbeat, relaunch when killed; close button hides the window (`close` → `preventDefault()` + `hide()`), `Tray` icon without "Quitter" (or behind a parent PIN), `app.requestSingleInstanceLock()`, `skipTaskbar` while hidden; fallbacks for lock (`tsdiscon`) and limits (running-process counting + IFEO until midnight); tick cross-check. Messages when the session app is down: a service cannot open windows on the child's desktop (session 0 isolation), but `WTSSendMessage` (koffi) or `msg.exe` can show a plain message box in the child's session (parent messages, "time's up", "the app was closed"). **Health check** on the dashboard: service alive / session app connected / child session state, and since when.
 - [ ] 5. **Per-machine installer** (WiX MSI via `@electron-forge/maker-wix`, or NSIS per-machine), admin password asked once at install: copies to `Program Files`, registers the service + restart policy, creates the logon launch for the session app, creates `%ProgramData%\CtrlAltBro` with its ACL, asks for the pairing code, the monitored accounts and the API URL (`config.json`), removes the time-zone right from `Users`; uninstall requires admin. Updates installed by the service, signed (pitfall 11). Code signing later (SmartScreen / Defender).
 - [ ] 6. **Tamper events** through `/sync` (session app killed, service restarted, clock or time zone changed, uninstall attempt) → new `events` field in the agent contract (web-api + `api-types.ts`), plus the dashboard offline alert (web-api).
 

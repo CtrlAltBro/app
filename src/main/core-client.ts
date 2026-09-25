@@ -54,7 +54,9 @@ function connect() {
     const conn: Core = new PipeConnection(socket);
     conn
       .on('status', setStatus)
-      .on('message', ({ text }) => void dialog.showMessageBox({ type: 'info', title: 'CtrlAltBro', message: text }))
+      .handle('message', ({ text }) => {
+        void dialog.showMessageBox({ type: 'info', title: 'CtrlAltBro', message: text });
+      })
       .on('timeUp', (text) => {
         showTimeUp(snapshot, text);
         snapshot = null;

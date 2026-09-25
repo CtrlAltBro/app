@@ -24,7 +24,8 @@ export type Host = {
   statusChanged(status: AgentStatus): void;
   // Things only the child's desktop can do.
   ui: {
-    message(text: string): void;
+    // Rejects when nobody can see it (no session app on the desktop).
+    message(text: string): Promise<void>;
     // Picture the foreground window before an app is closed, for showTimeUp.
     snapshotForeground(): Promise<void>;
     showTimeUp(text: TimeUpText): void;

@@ -26,12 +26,13 @@ export type CoreApi = {
 // Handled by the session app.
 export type SessionApi = {
   requests: {
+    // Replies once the message is on screen (not when it is closed).
+    message: [{ text: string }, void];
     snapshotForeground: [void, void];
     saveCurrentSession: [void, void];
   };
   events: {
     status: AgentStatus;
-    message: { text: string };
     timeUp: TimeUpText;
   };
 };
