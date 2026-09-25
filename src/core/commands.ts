@@ -54,7 +54,7 @@ export async function executeCommand(command: Command): Promise<CommandResult> {
         return done();
       }
       case 'lock_session':
-        await run('rundll32.exe', ['user32.dll,LockWorkStation'], { windowsHide: true });
+        await host().ui.lockSession();
         return done();
       default:
         return failed(`Commande inconnue « ${(command as { type: string }).type} »`);

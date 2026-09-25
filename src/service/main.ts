@@ -8,6 +8,7 @@ import type { ScreenTimeSession } from '../shared/api-types';
 import { PIPE_PATH, PipeConnection, type CoreApi, type SessionApi } from '../shared/pipe';
 import { runCli } from './cli';
 import { monitoredSids, nameForSid } from './monitored';
+import { lockUserSession, messageUser } from './session-control';
 import { nodeHost, type SessionLink } from './node-host';
 import { clearStaleBlocks } from './ifeo';
 import { launchApp, loggedOnSids, runningExesForUser, syncTasks } from './session-app';
@@ -47,6 +48,8 @@ let monitored = new Set<string>();
 
 // UI requests go to the most recently connected session app.
 const latest = () => [...clients].at(-1);
+// Connected session apps whose account is monitored (every client in dev).
+const monitoredConnected = () => (dev ? [...clients] : [...monitoredClients]);
 
 const session: SessionLink = {
   broadcast(status: AgentStatus) {
@@ -62,9 +65,32 @@ const session: SessionLink = {
     if (client) await client.request(type);
   },
   async showMessage(text) {
-    const client = latest();
-    if (!client) throw new Error("Service actif, mais l'app CtrlAltBro n'est pas ouverte sur le PC");
-    await client.request('message', { text });
+    // Prefer the child's session app; otherwise a plain msg.exe box in their session.
+    const targets = monitoredConnected();
+    if (targets.length) {
+      await Promise.any(targets.map((c) => c.request('message', { text })));
+      return;
+    }
+    if (!dev) {
+      const on = await loggedOnSids().catch(() => new Set<string>());
+      let sent = false;
+      for (const sid of monitored) if (on.has(sid)) sent = (await messageUser(await nameForSid(sid), text)) || sent;
+      if (sent) return;
+    }
+    throw new Error("Service actif, mais aucune session enfant n'est ouverte sur le PC");
+  },
+  async lockSession() {
+    // The session app locks its own desktop; without it, the service disconnects it.
+    let done = false;
+    for (const client of monitoredConnected()) done = (await client.request('lock').then(() => true, () => false)) || done;
+    if (!dev) {
+      const on = await loggedOnSids().catch(() => new Set<string>());
+      const withApp = new Set([...monitoredClients].map((c) => clientSids.get(c)));
+      for (const sid of monitored) {
+        if (on.has(sid) && !withApp.has(sid)) done = (await lockUserSession(await nameForSid(sid))) || done;
+      }
+    }
+    if (!done) throw new Error("Aucune session enfant à verrouiller");
   },
 };
 

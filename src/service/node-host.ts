@@ -14,8 +14,11 @@ export type SessionLink = {
   broadcast(status: AgentStatus): void;
   emit<K extends keyof SessionApi['events']>(type: K, data: SessionApi['events'][K]): void;
   request(type: 'snapshotForeground' | 'saveCurrentSession'): Promise<void>;
-  // Throws when no session app is connected.
+  // Show a message on the monitored child's desktop (session app, else msg.exe).
+  // Throws when no monitored session can receive it.
   showMessage(text: string): Promise<void>;
+  // Lock the monitored child's session (session app's LockWorkStation, else tsdiscon).
+  lockSession(): Promise<void>;
 };
 
 // DPAPI, machine scope: the admin pairs (writes the token), the SYSTEM service
@@ -64,6 +67,7 @@ export function nodeHost({ dev, session }: { dev: boolean; session: SessionLink 
     statusChanged: (status) => session.broadcast(status),
     ui: {
       message: (text) => session.showMessage(text),
+      lockSession: () => session.lockSession(),
       snapshotForeground: () => session.request('snapshotForeground'),
       showTimeUp: (text: TimeUpText) => session.emit('timeUp', text),
       saveCurrentSession: () => session.request('saveCurrentSession'),

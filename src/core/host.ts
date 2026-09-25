@@ -26,6 +26,8 @@ export type Host = {
   ui: {
     // Rejects when nobody can see it (no session app on the desktop).
     message(text: string): Promise<void>;
+    // Lock the monitored child's session (session app if it can, else the service).
+    lockSession(): Promise<void>;
     // Picture the foreground window before an app is closed, for showTimeUp.
     snapshotForeground(): Promise<void>;
     showTimeUp(text: TimeUpText): void;

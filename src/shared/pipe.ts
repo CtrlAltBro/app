@@ -32,6 +32,8 @@ export type SessionApi = {
   requests: {
     // Replies once the message is on screen (not when it is closed).
     message: [{ text: string }, void];
+    // Lock this session's desktop (LockWorkStation).
+    lock: [void, void];
     snapshotForeground: [void, void];
     saveCurrentSession: [void, void];
   };
