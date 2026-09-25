@@ -16,7 +16,8 @@
   "overrides": [
     {
       "files": [
-        "src/core/**/*.ts"
+        "src/core/**/*.ts",
+        "src/service/**/*.ts"
       ],
       "rules": {
         "no-restricted-imports": [
@@ -25,7 +26,7 @@
             "paths": [
               {
                 "name": "electron",
-                "message": "The core must run without Electron (future Windows service): go through host() in src/core/host.ts."
+                "message": "The core and the service run without Electron: go through host() in src/core/host.ts."
               }
             ],
             "patterns": [

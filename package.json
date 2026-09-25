@@ -7,6 +7,8 @@
   "private": true,
   "scripts": {
     "start": "electron-forge start",
+    "service": "node scripts/build-service.mjs && node --enable-source-maps .service/service.js --dev",
+    "build:service": "node scripts/build-service.mjs",
     "package": "electron-forge package",
     "make": "electron-forge make",
     "publish": "electron-forge publish",
@@ -32,6 +34,7 @@
     "@typescript-eslint/eslint-plugin": "^8.70.1",
     "@typescript-eslint/parser": "^8.70.1",
     "electron": "44.4.5",
+    "esbuild": "^0.21.5",
     "eslint": "^8.57.1",
     "eslint-plugin-import": "^2.32.0",
     "typescript": "~5.9",

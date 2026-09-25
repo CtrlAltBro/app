@@ -88,6 +88,9 @@ typings/
 # Vite
 .vite/
 
+# Service bundle (npm run build:service)
+.service/
+
 # Electron-Forge
 out/
 

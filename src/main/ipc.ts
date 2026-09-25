@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { getStatus, pair } from '../core/agent';
+import { getStatus, pair } from './core-client';
 
 export function registerAgentIpc() {
   ipcMain.handle('agent:getStatus', () => getStatus());
