@@ -60,11 +60,16 @@ async function persist() {
 }
 
 // New day since the counters were written: start every total back at zero.
+// Exes we have blocked from launching today (IFEO), so we can lift the blocks.
+const blockedByUs = new Set<string>();
+
 function rolloverIfNewDay() {
   const day = today();
   if (day === usage.day) return;
   usage = { day, ms: {} };
   warned.clear();
+  blockedByUs.clear();
+  void host().launchGuard.allowAll().catch((err) => console.error('[limits] levée des blocages échouée:', err));
   void persist();
 }
 
@@ -83,6 +88,9 @@ function enforce(exeName: string, minutes: number | null) {
     const outcome = await killApp(exeName, { ownerUser: enforcementUser ?? undefined });
     if (outcome === 'protected') return; // system app we must not touch
     console.log(`[limits] ✋ ${exeName} → ${outcome} (${minutes === null ? 'bloquée' : `limite ${minutes} min`})`);
+    // Stop it being reopened (even if the session app is killed), until midnight / reset.
+    blockedByUs.add(exeName);
+    void host().launchGuard.block(exeName).catch((err) => console.error('[limits] blocage échoué:', err));
     host().ui.showTimeUp(
       minutes === null
         ? { title: 'Application bloquée', app: label(exeName), detail: "Tes parents ont bloqué cette application sur ce PC." }
@@ -160,6 +168,8 @@ function mergeServerUsage(next: Rules) {
       resets[rule.exeName] = rule.usageResetAt;
       usage.ms[rule.exeName] = serverMs;
       warned.delete(rule.exeName);
+      // The parent gave time back: let the app launch again.
+      if (blockedByUs.delete(rule.exeName)) void host().launchGuard.allow(rule.exeName).catch(() => undefined);
       console.log(`[limits] ⏪ ${rule.exeName} remis à zéro par le parent → ${Math.round(serverMs / 60_000)} min`);
     } else if (serverMs > localMs) {
       usage.ms[rule.exeName] = serverMs;
@@ -174,6 +184,19 @@ export function setLimitRules(next: Rules) {
   rules = next.apps;
   rolloverIfNewDay();
   mergeServerUsage(next);
+  // Lift a block that no longer applies: rule removed, or the limit was raised
+  // above the time already used.
+  for (const exe of [...blockedByUs]) {
+    const rule = rules.find((r) => r.exeName === exe);
+    const stillBlocked =
+      !!rule &&
+      (rule.mode === 'block' ||
+        (rule.dailyLimitMinutes != null && (usage.ms[exe] ?? 0) >= rule.dailyLimitMinutes * 60_000));
+    if (!stillBlocked) {
+      blockedByUs.delete(exe);
+      void host().launchGuard.allow(exe).catch(() => undefined);
+    }
+  }
 }
 
 // Start counting and enforcing. Loads the counters and the rules cached from the
@@ -191,6 +214,8 @@ export async function stopLimits() {
   rules = [];
   warned.clear();
   lastKillAt.clear();
+  blockedByUs.clear();
+  await host().launchGuard.allowAll().catch(() => undefined);
   usage = { day: today(), ms: {} };
   await removeJson(USAGE_FILE);
 }

@@ -32,6 +32,14 @@ export type Host = {
     // Close the running screen-time session so it gets uploaded (app quit).
     saveCurrentSession(): Promise<void>;
   };
+  // Stop / allow a limited app from starting again once its limit is reached, so
+  // the child cannot reopen it (nor by killing the session app). Implemented by
+  // the service (machine-wide); a no-op in the Electron dev host.
+  launchGuard: {
+    block(exeName: string): Promise<void>;
+    allow(exeName: string): Promise<void>;
+    allowAll(): Promise<void>;
+  };
 };
 
 let current: Host | null = null;

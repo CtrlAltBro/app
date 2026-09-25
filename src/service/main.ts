@@ -9,6 +9,7 @@ import { PIPE_PATH, PipeConnection, type CoreApi, type SessionApi } from '../sha
 import { runCli } from './cli';
 import { monitoredSids, nameForSid } from './monitored';
 import { nodeHost, type SessionLink } from './node-host';
+import { clearStaleBlocks } from './ifeo';
 import { launchApp, loggedOnSids, runningExesForUser, syncTasks } from './session-app';
 
 // The core in its own Node process (milestone 2). Today it runs as the current
@@ -132,6 +133,8 @@ void (async () => {
     process.exit(process.exitCode ?? 0);
   }
   await initAgent();
+  // Lift any app-launch blocks left over from a previous day (service off past midnight).
+  if (!dev) await clearStaleBlocks().catch((e) => console.error('[ifeo] nettoyage échoué', e));
   const refreshMonitored = async () => {
     const next = new Set(await monitoredSids().catch(() => [...monitored]));
     if (!dev) await syncTasks(next, monitored).catch((e) => console.error('[app] synchro des tâches échouée', e));
