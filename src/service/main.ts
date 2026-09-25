@@ -103,5 +103,11 @@ void (async () => {
     process.exit(process.exitCode ?? 0);
   }
   await initAgent();
-  server.listen(PIPE_PATH, () => console.log(`[service] 🚀 cœur démarré, pipe ${PIPE_PATH}`));
+  // readableAll/writableAll: the service runs as SYSTEM, so without this the pipe
+  // it creates is reachable only by SYSTEM and Administrators — the child's session
+  // app (a standard, medium-integrity process) could not connect. Anyone can connect
+  // anyway, so the pipe is never trusted for sensitive actions (see CLAUDE.md #2).
+  server.listen({ path: PIPE_PATH, readableAll: true, writableAll: true }, () =>
+    console.log(`[service] 🚀 cœur démarré, pipe ${PIPE_PATH}`),
+  );
 })();

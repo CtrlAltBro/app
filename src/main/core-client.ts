@@ -16,6 +16,7 @@ const RETRY_MS = 2_000;
 const MAX_BACKLOG = 500;
 
 let core: Core | null = null;
+let loggedDown = false;
 let status: AgentStatus | null = null;
 let snapshot: Snapshot | null = null;
 let sensing = false;
@@ -66,6 +67,7 @@ function connect() {
       })
       .handle('saveCurrentSession', () => saveCurrentSession());
     core = conn;
+    loggedDown = false;
     console.log('[pipe] 🔌 connecté au cœur');
     for (const session of backlog.splice(0)) conn.emit('session', session);
     resolveConnected(conn);
@@ -77,10 +79,16 @@ function connect() {
       waitForCore();
       console.log('[pipe] 💤 cœur injoignable, nouvel essai…');
       if (status?.paired) setStatus({ ...status, sync: { ...status.sync, error: 'Service CtrlAltBro arrêté' } });
+    } else if (!loggedDown) {
+      // Never connected yet: log the first failure (then stay quiet while retrying).
+      loggedDown = true;
+      console.log('[pipe] ⏳ service CtrlAltBro pas encore joignable, nouvel essai toutes les 2 s…');
     }
     setTimeout(connect, RETRY_MS);
   });
-  socket.on('error', () => undefined);
+  socket.on('error', (err) => {
+    if (!core && !loggedDown) console.log('[pipe] ⏳ connexion au service échouée:', (err as Error).message);
+  });
 }
 
 export function connectCore() {
