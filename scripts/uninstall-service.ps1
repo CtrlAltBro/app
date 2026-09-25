@@ -14,6 +14,14 @@ if (Test-Path $svc) {
   & $svc uninstall
   Start-Sleep 2
 }
+
+# Session-app launch tasks and any running session app.
+schtasks /query /fo csv 2>$null | Select-String 'CtrlAltBro-' | ForEach-Object {
+  $name = ($_ -split '","')[0].Trim('"')
+  schtasks /delete /tn $name /f 2>$null | Out-Null
+}
+taskkill /IM ctrlaltbro.exe /F /T 2>$null | Out-Null
+
 Remove-Item -Recurse -Force $InstallDir -ErrorAction SilentlyContinue
 if (-not $KeepData) { Remove-Item -Recurse -Force $DataDir -ErrorAction SilentlyContinue }
 if ($KeepData) { Write-Host "Service désinstallé (données conservées)." } else { Write-Host "Service désinstallé." }
