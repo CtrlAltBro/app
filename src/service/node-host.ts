@@ -49,7 +49,15 @@ ConvertTo-Json -InputObject @($out) -Compress`;
 // until the installer applies the ACL.
 export const dataDir = () => path.join(process.env.ProgramData ?? 'C:\\ProgramData', 'CtrlAltBro');
 
-export function nodeHost({ dev, session }: { dev: boolean; session: SessionLink }): Host {
+export function nodeHost({
+  dev,
+  session,
+  health,
+}: {
+  dev: boolean;
+  session: SessionLink;
+  health: Host['health'];
+}): Host {
   return {
     version: __APP_VERSION__,
     isDev: dev,
@@ -65,6 +73,7 @@ export function nodeHost({ dev, session }: { dev: boolean; session: SessionLink 
       return files.map((_, i) => parsed[i] ?? null);
     },
     statusChanged: (status) => session.broadcast(status),
+    health,
     ui: {
       message: (text) => session.showMessage(text),
       lockSession: () => session.lockSession(),

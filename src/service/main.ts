@@ -80,21 +80,37 @@ const session: SessionLink = {
     throw new Error("Service actif, mais aucune session enfant n'est ouverte sur le PC");
   },
   async lockSession() {
-    // The session app locks its own desktop; without it, the service disconnects it.
+    // The session app locks its own desktop; for any monitored session it did not
+    // lock (app absent or too old to handle it), the service disconnects it.
     let done = false;
-    for (const client of monitoredConnected()) done = (await client.request('lock').then(() => true, () => false)) || done;
+    const locked = new Set<string>();
+    for (const client of monitoredConnected()) {
+      if (await client.request('lock').then(() => true, () => false)) {
+        done = true;
+        const sid = clientSids.get(client);
+        if (sid) locked.add(sid);
+      }
+    }
     if (!dev) {
       const on = await loggedOnSids().catch(() => new Set<string>());
-      const withApp = new Set([...monitoredClients].map((c) => clientSids.get(c)));
       for (const sid of monitored) {
-        if (on.has(sid) && !withApp.has(sid)) done = (await lockUserSession(await nameForSid(sid))) || done;
+        if (on.has(sid) && !locked.has(sid)) done = (await lockUserSession(await nameForSid(sid))) || done;
       }
     }
     if (!done) throw new Error("Aucune session enfant à verrouiller");
   },
 };
 
-setHost(nodeHost({ dev: process.argv.includes('--dev'), session }));
+// Health for the dashboard: is a monitored child signed in, and is their session app connected.
+const health = async () => {
+  const on = await loggedOnSids().catch(() => new Set<string>());
+  return {
+    appConnected: monitoredConnected().length > 0,
+    childSignedIn: dev ? clients.size > 0 : [...monitored].some((sid) => on.has(sid)),
+  };
+};
+
+setHost(nodeHost({ dev, session, health }));
 
 const server = net.createServer((socket): void => {
   const client: Client = new PipeConnection(socket);
