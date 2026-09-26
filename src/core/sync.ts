@@ -71,7 +71,10 @@ export function startSyncLoop(credentials: Credentials, callbacks: SyncCallbacks
   }
 
   const ping = () =>
-    post<PingResponse>('ping', { agentVersion: host().version });
+    host()
+      .health()
+      .catch(() => ({ appConnected: false, childSignedIn: false }))
+      .then((h) => post<PingResponse>('ping', { agentVersion: host().version, ...h }));
 
   // Full sync: uploads inventory / screen time / command results, applies rules and commands.
   async function syncOnce(): Promise<number> {

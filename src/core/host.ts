@@ -22,6 +22,8 @@ export type Host = {
   readShortcuts(files: string[]): Promise<(Shortcut | null)[]>;
   // Pairing or sync status changed.
   statusChanged(status: AgentStatus): void;
+  // Cheap health snapshot sent with each /ping, for the dashboard.
+  health(): Promise<{ appConnected: boolean; childSignedIn: boolean }>;
   // Things only the child's desktop can do.
   ui: {
     // Rejects when nobody can see it (no session app on the desktop).
