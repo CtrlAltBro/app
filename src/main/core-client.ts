@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import net from 'node:net';
+import path from 'node:path';
 import { promisify } from 'node:util';
 import { BrowserWindow, dialog } from 'electron';
 import type { AgentStatus, PairResult } from '../shared/agent-api';
@@ -120,9 +121,55 @@ export async function getStatus(): Promise<AgentStatus> {
   return (await connected).request('getStatus');
 }
 
+// Pairing is an admin action (the service refuses it over the pipe, so a child
+// cannot pair the PC to their own account). The button raises a UAC prompt: an
+// elevated helper pairs as admin, then restarts the service so it reloads the
+// token. A standard user cannot elevate, so this stays admin-only.
 export async function pair(code: string, name: string): Promise<PairResult> {
-  if (!core) return { ok: false, error: 'Le service CtrlAltBro ne répond pas.' };
-  return core.request('pair', { code, name }).catch(() => ({ ok: false, error: 'Le service CtrlAltBro ne répond pas.' }));
+  const elevated = await runElevatedPairing(code, name);
+  if (!elevated.ok) return { ok: false, error: elevated.error ?? "Échec de l'appairage." };
+  // The service was restarted; the pipe reconnects and pushes the paired status.
+  const paired = await waitForPaired(12_000);
+  return { ok: true, status: paired ?? status ?? { paired: false, suggestedName: name } };
+}
+
+const psQuote = (s: string) => `'${s.replace(/'/g, "''")}'`;
+
+async function runElevatedPairing(code: string, name: string): Promise<{ ok: boolean; error?: string }> {
+  const dir = path.join(process.env.ProgramFiles ?? 'C:\\Program Files', 'CtrlAltBro');
+  const node = path.join(dir, 'node.exe');
+  const js = path.join(dir, 'service.js');
+  // Runs elevated: pair as admin, then restart the service so it reloads the token.
+  const inner =
+    `& ${psQuote(node)} ${psQuote(js)} pair ${psQuote(code)} ${psQuote(name)}; ` +
+    `if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; Restart-Service CtrlAltBro`;
+  // -Verb RunAs raises the UAC prompt; on decline it throws (mapped to 1223).
+  const outer =
+    `try { $p = Start-Process powershell -Verb RunAs -Wait -PassThru ` +
+    `-ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-Command', ${psQuote(inner)}); exit $p.ExitCode } ` +
+    `catch { exit 1223 }`;
+  try {
+    await run('powershell.exe', ['-NoProfile', '-Command', outer], { windowsHide: true });
+    return { ok: true };
+  } catch (err) {
+    const exit = (err as { code?: number | string }).code;
+    if (exit === 1223) return { ok: false, error: 'Appairage annulé (autorisation administrateur refusée).' };
+    return { ok: false, error: "Échec de l'appairage. Vérifie le code, puis réessaie (une autorisation administrateur est requise)." };
+  }
+}
+
+// Poll the last pushed status until the PC shows as paired, or give up.
+function waitForPaired(timeoutMs: number): Promise<Extract<AgentStatus, { paired: true }> | null> {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const tick = () => {
+      const s = status;
+      if (s?.paired) return resolve(s);
+      if (Date.now() - start > timeoutMs) return resolve(null);
+      setTimeout(tick, 300);
+    };
+    tick();
+  });
 }
 
 // App quit or Windows session end: hand the running session to the core.

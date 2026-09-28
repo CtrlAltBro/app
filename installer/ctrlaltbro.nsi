@@ -1,6 +1,6 @@
 ; CtrlAltBro per-machine installer (milestone 5).
 ; Elevates once at install; afterwards the SYSTEM service starts at boot and the
-; session app is launched into the child's session by a scheduled task — no admin
+; session app is launched into the child's session by a scheduled task - no admin
 ; password and no UAC prompt for the child at any startup (see CLAUDE.md pitfall 7).
 ;
 ; Built by scripts\build-installer.ps1, which stages the files and passes VERSION
@@ -54,7 +54,7 @@ Function PairingPageCreate
     Abort
   ${EndIf}
 
-  ${NSD_CreateLabel} 0 0 100% 24u "Colle le code d'appairage généré depuis le dashboard (« Ajouter un PC »). Tu peux aussi laisser vide et appairer plus tard en admin."
+  ${NSD_CreateLabel} 0 0 100% 24u "Colle le code d'appairage genere depuis le dashboard (Ajouter un PC). Tu peux aussi laisser vide et appairer plus tard en admin."
   ${NSD_CreateLabel} 0 30u 100% 12u "Code d'appairage :"
   ${NSD_CreateText} 0 42u 100% 12u ""
   Pop $HwndPairCode
@@ -80,7 +80,7 @@ Section "Install"
   nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\postinstall.ps1" -InstallDir "$INSTDIR" -PairCode "$PairCode" -PcName "$PcName"'
   Pop $0
   ${If} $0 != 0
-    DetailPrint "postinstall a renvoyé le code $0 (voir les détails)."
+    DetailPrint "postinstall a renvoye le code $0 (voir les details)."
   ${EndIf}
 
   WriteUninstaller "$INSTDIR\uninstall.exe"
