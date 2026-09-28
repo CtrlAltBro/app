@@ -208,6 +208,16 @@ export async function startLimits(initialRules: Rules | null) {
   started = true;
 }
 
+// Parent-triggered "recalibrate": drop every launch block we may have set (including
+// orphans left by a past install), and clear our local tracking. Anything genuinely
+// over its limit is re-blocked on its next tick, so this only removes artifacts.
+export async function recalibrate() {
+  blockedByUs.clear();
+  warned.clear();
+  await host().launchGuard.allowAll().catch((err) => console.error('[limits] recalibrage échoué:', err));
+  console.log('[limits] 🧹 recalibrage : blocages levés');
+}
+
 // Stop enforcing and forget today's counters (device unpaired).
 export async function stopLimits() {
   started = false;

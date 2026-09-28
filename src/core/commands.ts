@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { Command, CommandResult } from '../shared/api-types';
 import { host } from './host';
+import { recalibrate } from './limits';
 import { isProtected } from './protected';
 
 const run = promisify(execFile);
@@ -55,6 +56,9 @@ export async function executeCommand(command: Command): Promise<CommandResult> {
       }
       case 'lock_session':
         await host().ui.lockSession();
+        return done();
+      case 'recalibrate':
+        await recalibrate();
         return done();
       default:
         return failed(`Commande inconnue « ${(command as { type: string }).type} »`);

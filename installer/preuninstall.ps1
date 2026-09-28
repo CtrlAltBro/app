@@ -21,6 +21,19 @@ schtasks /query /fo csv 2>$null | Select-String 'CtrlAltBro-' | ForEach-Object {
 }
 taskkill /IM ctrlaltbro.exe /F /T 2>$null | Out-Null
 
+# Remove any IFEO launch blocks we set (Debugger -> our app), so uninstalling never
+# leaves an app stuck being intercepted. Scans the registry (catches orphans too).
+$ifeo = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options"
+Get-ChildItem $ifeo -ErrorAction SilentlyContinue | ForEach-Object {
+  $dbg = (Get-ItemProperty $_.PSPath -Name Debugger -ErrorAction SilentlyContinue).Debugger
+  if ($dbg -and $dbg -match 'CtrlAltBro') {
+    Remove-ItemProperty $_.PSPath -Name Debugger -Force -ErrorAction SilentlyContinue
+    if ((Get-Item $_.PSPath).Property.Count -eq 0 -and (Get-ChildItem $_.PSPath -ErrorAction SilentlyContinue).Count -eq 0) {
+      Remove-Item $_.PSPath -Force -Recurse -ErrorAction SilentlyContinue
+    }
+  }
+}
+
 # State dir (token, rules, counters). The install dir itself is removed by NSIS.
 Remove-Item -Recurse -Force $DataDir -ErrorAction SilentlyContinue
 
