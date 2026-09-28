@@ -94,6 +94,10 @@ typings/
 # Electron-Forge
 out/
 
+# Installer build artifacts (scripts/build-installer.ps1)
+installer/staging/
+installer/*.exe
+
 # Custom
 specs.md
 .env.local
