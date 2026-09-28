@@ -2,6 +2,9 @@
 # down. Mirrors the proven scripts\install-service.ps1 flow, but the files are
 # already in place, so this only configures: state dir + ACL, optional pairing,
 # service registration/start, and best-effort removal of the time-zone right.
+#
+# ASCII only on purpose: PowerShell 5.1 reads a no-BOM .ps1 as ANSI, so accented
+# characters corrupt the parse. Keep user-facing text here plain.
 param(
   [Parameter(Mandatory = $true)][string]$InstallDir,
   [string]$DataDir = "$env:ProgramData\CtrlAltBro",
@@ -16,7 +19,7 @@ $svc = Join-Path $InstallDir 'ctrlaltbro-svc.exe'
 
 # State dir readable/writable only by SYSTEM and Administrators: the child (a
 # standard user) cannot read the device token nor edit the cached rules / counters.
-Write-Host "→ Dossier de données $DataDir (SYSTEM + Administrateurs)"
+Write-Host "[1/4] State dir $DataDir (SYSTEM + Administrators only)"
 New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
 icacls $DataDir /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" | Out-Null
 
@@ -24,15 +27,15 @@ icacls $DataDir /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI
 # SYSTEM service can read it later. Blank code = pair later with the admin command.
 if ($PairCode.Trim()) {
   if (-not $PcName.Trim()) { $PcName = $env:COMPUTERNAME }
-  Write-Host "→ Appairage de ce PC ($PcName)"
+  Write-Host "[2/4] Pairing this PC ($PcName)"
   & $node $serviceJs pair $PairCode.Trim() $PcName.Trim()
-  if ($LASTEXITCODE -ne 0) { Write-Warning "Appairage échoué (code $LASTEXITCODE) — à refaire en admin : node `"$serviceJs`" pair <code> `"<nom>`"" }
+  if ($LASTEXITCODE -ne 0) { Write-Warning "Pairing failed (code $LASTEXITCODE). Redo as admin: node service.js pair CODE NAME" }
 } else {
-  Write-Host "→ Pas de code fourni : appaire plus tard en admin : node `"$serviceJs`" pair <code> `"<nom>`""
+  Write-Host "[2/4] No code given. Pair later as admin: node service.js pair CODE NAME"
 }
 
 # Register and start the SYSTEM service (WinSW). Its restart policy is in the XML.
-Write-Host "→ Installation du service"
+Write-Host "[3/4] Installing the service"
 & $svc install
 & $svc start
 Start-Sleep 2
@@ -48,7 +51,7 @@ function Remove-TimeZoneRightFromUsers {
     $export = Join-Path $tmp 'export.inf'
     secedit /export /areas USER_RIGHTS /cfg $export | Out-Null
     $line = (Get-Content $export) | Where-Object { $_ -match '^SeTimeZonePrivilege\s*=' }
-    if (-not $line) { Write-Host "→ SeTimeZonePrivilege déjà non attribué, rien à faire."; return }
+    if (-not $line) { Write-Host "[4/4] SeTimeZonePrivilege already unassigned."; return }
     $rhs = ($line -split '=', 2)[1].Trim()
     $kept = @($rhs -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -and $_ -notmatch 'S-1-5-32-545' -and $_ -notmatch '^\*?Users$' })
     $newLine = 'SeTimeZonePrivilege = ' + ($kept -join ',')
@@ -57,11 +60,11 @@ function Remove-TimeZoneRightFromUsers {
       Set-Content -Path $apply -Encoding Unicode
     secedit /configure /db (Join-Path $tmp 'sec.sdb') /cfg $apply /areas USER_RIGHTS | Out-Null
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
-    Write-Host "→ Droit « changer le fuseau horaire » retiré du groupe Users."
+    Write-Host "[4/4] Removed 'Change the time zone' from the Users group."
   } catch {
-    Write-Warning "Retrait du droit fuseau horaire ignoré (non bloquant) : $_"
+    Write-Warning "Time-zone right removal skipped (non-fatal): $_"
   }
 }
 Remove-TimeZoneRightFromUsers
 
-Write-Host "OK. Le service tourne et lancera l'app dans chaque session enfant surveillée."
+Write-Host "Done. The service is running and will launch the app in each monitored child session."

@@ -1,5 +1,6 @@
 # Uninstall-time actions, run elevated by the NSIS uninstaller before the files are
 # removed. Mirrors scripts\uninstall-service.ps1. $INSTDIR is removed by NSIS after.
+# ASCII only: PowerShell 5.1 reads a no-BOM .ps1 as ANSI (keep text plain).
 param(
   [Parameter(Mandatory = $true)][string]$InstallDir,
   [string]$DataDir = "$env:ProgramData\CtrlAltBro"
@@ -23,4 +24,4 @@ taskkill /IM ctrlaltbro.exe /F /T 2>$null | Out-Null
 # State dir (token, rules, counters). The install dir itself is removed by NSIS.
 Remove-Item -Recurse -Force $DataDir -ErrorAction SilentlyContinue
 
-Write-Host "Service et données CtrlAltBro supprimés."
+Write-Host "CtrlAltBro service and data removed."
