@@ -160,6 +160,8 @@ export async function clearPairing() {
   syncLoop?.stop();
   syncLoop = null;
   credentials = null;
+  // Lift any launch blocks (IFEO) so unpairing never leaves a blocked app behind.
+  await stopLimits();
   await clearCredentials();
   await clearAgentState();
   await clearScreenTime();

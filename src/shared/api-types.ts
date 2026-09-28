@@ -17,6 +17,7 @@ export type Rules = { version: number; apps: AppRule[]; sites: SiteRule[]; day?:
 export type Command =
   | { id: string; type: 'kill_app'; payload: { exeName: string } }
   | { id: string; type: 'lock_session'; payload: null }
+  | { id: string; type: 'recalibrate'; payload: null }
   | { id: string; type: 'show_message'; payload: { text: string } };
 
 export type InstalledApp = { exeName: string; name: string; path?: string };

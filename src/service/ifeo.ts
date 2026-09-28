@@ -86,11 +86,35 @@ export async function allowLaunch(exeName: string) {
   console.log(`[ifeo] ✅ ${exe} de nouveau autorisé`);
 }
 
-// Remove every block we set (local midnight, or a clean start).
+// Every IFEO image whose Debugger points at our blocker, found by scanning the
+// registry — so we also catch orphans that blocked.json doesn't track (e.g. keys
+// left by a previous install/pairing, like a stuck devenv.exe).
+async function ourBlockedExes(): Promise<string[]> {
+  const ours = blocker().toLowerCase();
+  const { stdout } = await run('reg.exe', ['query', IFEO, '/s', '/v', 'Debugger'], { windowsHide: true }).catch(
+    () => ({ stdout: '' }),
+  );
+  const exes: string[] = [];
+  let currentExe: string | null = null;
+  for (const line of stdout.split(/\r?\n/)) {
+    const key = /Image File Execution Options\\([^\\]+)\s*$/i.exec(line);
+    if (key) { currentExe = key[1].toLowerCase(); continue; }
+    const dbg = /Debugger\s+REG_SZ\s+(.+)/i.exec(line);
+    if (dbg && currentExe) {
+      const val = dbg[1].trim().replace(/^"|"$/g, '').toLowerCase();
+      if (val === ours || val.includes('ctrlaltbro')) exes.push(currentExe);
+      currentExe = null;
+    }
+  }
+  return exes;
+}
+
+// Remove every block we set (local midnight, a clean start, or a recalibration).
+// Scans the registry as well as blocked.json, so orphaned keys are cleaned too.
 export async function allowAll() {
-  const state = await loadState();
-  for (const exe of state.exes) await unblock(exe);
-  if (state.exes.length) console.log(`[ifeo] ✅ ${state.exes.length} blocage(s) levé(s)`);
+  const exes = new Set([...(await loadState()).exes, ...(await ourBlockedExes())]);
+  for (const exe of exes) await unblock(exe);
+  if (exes.size) console.log(`[ifeo] ✅ ${exes.size} blocage(s) levé(s)`);
   await saveState({ day: today(), exes: [] });
 }
 

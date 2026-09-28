@@ -144,9 +144,10 @@ async function runElevatedPairing(code: string, name: string): Promise<{ ok: boo
     `& ${psQuote(node)} ${psQuote(js)} pair ${psQuote(code)} ${psQuote(name)}; ` +
     `if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; Restart-Service CtrlAltBro`;
   // -Verb RunAs raises the UAC prompt; on decline it throws (mapped to 1223).
+  // -WindowStyle Hidden keeps the elevated helper's console from flashing on screen.
   const outer =
     `try { $p = Start-Process powershell -Verb RunAs -Wait -PassThru ` +
-    `-ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-Command', ${psQuote(inner)}); exit $p.ExitCode } ` +
+    `-ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-Command', ${psQuote(inner)}); exit $p.ExitCode } ` +
     `catch { exit 1223 }`;
   try {
     await run('powershell.exe', ['-NoProfile', '-Command', outer], { windowsHide: true });
