@@ -112,6 +112,37 @@ const health = async () => {
 
 setHost(nodeHost({ dev, session, health }));
 
+// Anti-spoof for foreground ticks (pitfall #2). The pipe is world-connectable, so a
+// process the child runs can pretend to be the session app and send fake foreground
+// ticks. We never trust the pipe to decide that a limited app is being used: a tick
+// is counted only for an exe that is really running under the reporting account.
+// tasklist is cached per SID for a few seconds so the 5 s ticks don't each shell out.
+const RUNNING_TTL_MS = 5_000;
+const runningCache = new Map<string, { at: number; exes: Promise<Set<string>> }>();
+function runningExesForSid(sid: string): Promise<Set<string>> {
+  const hit = runningCache.get(sid);
+  if (hit && Date.now() - hit.at < RUNNING_TTL_MS) return hit.exes;
+  const exes = nameForSid(sid).then((name) => runningExesForUser(name)).catch(() => new Set<string>());
+  runningCache.set(sid, { at: Date.now(), exes });
+  return exes;
+}
+
+async function countForegroundTick(client: Client, exeName: string | null, elapsedMs: number) {
+  // In dev everything runs as one user and there is no monitored SID to check against.
+  if (dev) return foregroundTick(exeName, elapsedMs);
+  // A null tick (locked, idle, Store app) carries no exe to verify — pass it through
+  // so the day rollover still runs; it counts nothing.
+  if (exeName) {
+    const sid = clientSids.get(client);
+    const running = sid ? await runningExesForSid(sid) : new Set<string>();
+    if (!running.has(exeName.toLowerCase())) {
+      console.log(`[pipe] 🕵️  tick ignoré : ${exeName} ne tourne pas dans la session (probable spoof)`);
+      return;
+    }
+  }
+  foregroundTick(exeName, elapsedMs);
+}
+
 const server = net.createServer((socket): void => {
   const client: Client = new PipeConnection(socket);
   clients.add(client);
@@ -138,7 +169,9 @@ const server = net.createServer((socket): void => {
     })
     .on('foreground', ({ exeName, elapsedMs }) => {
       if (!isMonitored(client)) return; // ignore the parent's session
-      foregroundTick(typeof exeName === 'string' ? exeName : null, Math.max(0, Math.min(Number(elapsedMs) || 0, 60_000)));
+      const exe = typeof exeName === 'string' ? exeName : null;
+      const ms = Math.max(0, Math.min(Number(elapsedMs) || 0, 60_000));
+      void countForegroundTick(client, exe, ms);
     })
     .on('leave', () => {
       if (isMonitored(client)) flushNow();
