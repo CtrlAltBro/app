@@ -1,4 +1,5 @@
 import './index.css';
+import { BUILD, buildLabel } from './build-info';
 import type { AgentStatus, SyncState } from './shared/agent-api';
 
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
@@ -52,6 +53,10 @@ function syncLabel({ lastSyncAt, error }: SyncState) {
   const last = lastSyncAt ? `Dernière synchro : ${new Date(lastSyncAt).toLocaleTimeString()}` : 'Synchronisation…';
   return error ? `${error} — ${lastSyncAt ? last.toLowerCase() : 'nouvel essai bientôt'}` : last;
 }
+
+const buildEl = $('#build');
+buildEl.textContent = buildLabel();
+buildEl.title = `Build du ${new Date(BUILD.time).toLocaleString()}`;
 
 window.agent.onStatus(render);
 window.agent.getStatus().then(render);
