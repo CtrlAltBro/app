@@ -207,11 +207,13 @@ export function startSyncLoop(credentials: Credentials, callbacks: SyncCallbacks
       await currentTick;
       await tick();
     },
-    // Tell the API we are leaving so the dashboard shows the PC offline right away.
-    async bye() {
+    // Tell the API we are leaving (quit / shutdown) or going to sleep, so the dashboard
+    // shows the PC offline right away and does not flag it as silent.
+    async bye(reason: 'shutdown' | 'sleep' = 'shutdown') {
       await fetch(`${credentials.apiUrl}/api/agent/v1/bye`, {
         method: 'POST',
-        headers: { authorization: `Bearer ${credentials.token}` },
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${credentials.token}` },
+        body: JSON.stringify({ reason }),
         signal: AbortSignal.timeout(3_000),
       }).catch(() => undefined);
     },

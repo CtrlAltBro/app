@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import net from 'node:net';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { BrowserWindow, dialog } from 'electron';
+import { BrowserWindow, dialog, powerMonitor } from 'electron';
 import type { AgentStatus, PairResult } from '../shared/agent-api';
 import type { ScreenTimeSession } from '../shared/api-types';
 import { PIPE_PATH, PipeConnection, type CoreApi, type SessionApi } from '../shared/pipe';
@@ -114,6 +114,8 @@ function connect() {
 
 export function connectCore() {
   connect();
+  // Only the session app sees Windows going to sleep; relay it to the service.
+  powerMonitor.on('suspend', () => core?.emit('suspend'));
 }
 
 export async function getStatus(): Promise<AgentStatus> {

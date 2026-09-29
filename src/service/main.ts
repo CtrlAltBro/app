@@ -1,5 +1,5 @@
 import net from 'node:net';
-import { flushNow, getStatus, initAgent, shutdownAgent } from '../core/agent';
+import { flushNow, getStatus, initAgent, shutdownAgent, sleepNow } from '../core/agent';
 import { setHost } from '../core/host';
 import { foregroundTick, ruledExes, runningTick, setEnforcementUser } from '../core/limits';
 import { recordEvent } from '../core/events-queue';
@@ -201,7 +201,10 @@ const server = net.createServer((socket): void => {
     .on('leave', () => {
       if (isMonitored(client)) flushNow();
     })
-    .on('goodbye', () => saidGoodbye.add(client));
+    .on('goodbye', () => saidGoodbye.add(client))
+    .on('suspend', () => {
+      if (isMonitored(client)) sleepNow();
+    });
   socket.on('close', () => {
     const sid = clientSids.get(client);
     // Dropped without 'goodbye' = killed, unless another app for this account is still
