@@ -33,6 +33,17 @@ export type ScreenTimeSession = {
 
 export type CommandResult = { id: string; status: 'done' | 'failed'; error?: string };
 
+// Signs of tampering the agent noticed, reported through /sync.
+export type TamperEventType =
+  | 'app_killed'
+  | 'service_restarted'
+  | 'clock_changed'
+  | 'timezone_changed'
+  | 'pipe_spoof'
+  | 'uninstall';
+
+export type TamperEvent = { id: string; type: TamperEventType; at: string; detail?: string };
+
 export type SyncInput = {
   agentVersion?: string;
   timeZone?: string;
@@ -41,6 +52,7 @@ export type SyncInput = {
   screenTime?: ScreenTimeSession[];
   history?: { id: string; browser: string; url: string; title?: string; visitedAt: string }[];
   commandResults?: CommandResult[];
+  events?: TamperEvent[];
 };
 
 export type SyncResponse = {

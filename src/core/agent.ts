@@ -2,6 +2,7 @@ import os from 'node:os';
 import type { AgentStatus, PairResult, SyncState } from '../shared/agent-api';
 import { API_URL } from './config';
 import { clearCredentials, loadCredentials, saveCredentials, type Credentials } from './credentials';
+import { clearEvents, loadEventsQueue } from './events-queue';
 import { host } from './host';
 import { setLimitRules, startLimits, stopLimits } from './limits';
 import { clearScreenTime, loadScreenTimeQueue, persistScreenTime } from './screen-time-queue';
@@ -77,6 +78,7 @@ async function unpair() {
   syncLoop?.stop();
   syncLoop = null;
   await clearScreenTime();
+  await clearEvents();
   await stopLimits();
   credentials = null;
   syncState = { lastSyncAt: null, error: null };
@@ -87,6 +89,7 @@ async function unpair() {
 
 export async function initAgent() {
   await loadScreenTimeQueue();
+  await loadEventsQueue();
   credentials = await loadCredentials();
   if (credentials) startSync(credentials);
 }
@@ -133,6 +136,7 @@ export async function pair(code: string, name: string): Promise<PairResult> {
   await saveCredentials(credentials);
   await clearAgentState();
   await clearScreenTime();
+  await clearEvents();
   syncState = { lastSyncAt: null, error: null };
   startSync(credentials);
   return { ok: true, status: getStatus() };
@@ -149,6 +153,7 @@ export async function pairFromCli(code: string, name: string, force: boolean): P
   await saveCredentials(result.creds);
   await clearAgentState();
   await clearScreenTime();
+  await clearEvents();
   return {
     ok: true,
     status: { paired: true, deviceId: result.creds.deviceId, deviceName: result.creds.deviceName, sync: { lastSyncAt: null, error: null } },
@@ -165,4 +170,5 @@ export async function clearPairing() {
   await clearCredentials();
   await clearAgentState();
   await clearScreenTime();
+  await clearEvents();
 }
