@@ -40,6 +40,7 @@ export type TamperEventType =
   | 'clock_changed'
   | 'timezone_changed'
   | 'pipe_spoof'
+  | 'safe_mode'
   | 'uninstall';
 
 export type TamperEvent = { id: string; type: TamperEventType; at: string; detail?: string };

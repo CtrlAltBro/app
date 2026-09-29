@@ -1,9 +1,18 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { recordEvent } from '../core/events-queue';
 import { readJson, removeJson, writeJson } from '../core/storage';
 import { runPowerShell } from './powershell';
 
-// Service-side tamper detectors: unclean service stop, uninstall, system clock and
-// time zone changes. Each one only records an event (events-queue.ts sends it).
+const run = promisify(execFile);
+const reg = (args: string[]) => run('reg.exe', args, { windowsHide: true });
+
+// Service-side tamper detectors: unclean service stop, uninstall, Safe Mode boot,
+// system clock and time zone changes. Each one only records an event (events-queue.ts
+// sends it).
+
+const SAFEBOOT = 'HKLM\\SYSTEM\\CurrentControlSet\\Control\\SafeBoot';
+const SERVICE_KEY = 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\CtrlAltBro';
 
 // Present while the service runs, removed on a clean stop: found at startup, it
 // means the last run was killed, crashed, or the power was cut.
@@ -27,6 +36,28 @@ export async function checkUncleanStop() {
     );
   }
   await writeJson(RUNNING_FILE, { since: new Date().toISOString() });
+}
+
+// Make the service also start in Safe Mode (minimal and with-network), so a child who
+// reboots into Safe Mode to escape the limits keeps being enforced, and clear the
+// Tcpip dependency that would otherwise stop it from starting in minimal Safe Mode
+// (the core already tolerates the network being down). Idempotent; SYSTEM only.
+export async function ensureSafeBootStart() {
+  for (const set of ['Minimal', 'Network']) {
+    await reg(['add', `${SAFEBOOT}\\${set}\\CtrlAltBro`, '/ve', '/t', 'REG_SZ', '/d', 'Service', '/f']).catch(() => undefined);
+  }
+  await reg(['delete', SERVICE_KEY, '/v', 'DependOnService', '/f']).catch(() => undefined);
+}
+
+// The SafeBoot\Option key exists only when the PC is currently in Safe Mode.
+export async function checkSafeMode() {
+  const inSafeMode = await reg(['query', `${SAFEBOOT}\\Option`]).then(() => true, () => false);
+  if (inSafeMode) {
+    recordEvent(
+      'safe_mode',
+      'Le PC a démarré en mode sans échec, une façon connue de désactiver les protections. CtrlAltBro tourne quand même.',
+    );
+  }
 }
 
 // Clean stop (service stop, PC shutdown). Reports an uninstall first if one is running.
