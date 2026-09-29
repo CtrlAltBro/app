@@ -8,6 +8,9 @@ param(
 $ErrorActionPreference = 'Continue'
 
 $svc = Join-Path $InstallDir 'ctrlaltbro-svc.exe'
+# Tell the service it is being uninstalled: on its clean stop it reports an
+# "uninstall" tamper event and uploads it before exiting (best effort, needs network).
+if (Test-Path $DataDir) { Set-Content -Path (Join-Path $DataDir 'uninstalling.json') -Value '{}' -Encoding ASCII }
 if (Test-Path $svc) {
   & $svc stop
   & $svc uninstall
