@@ -176,6 +176,8 @@ function waitForPaired(timeoutMs: number): Promise<Extract<AgentStatus, { paired
 // App quit or Windows session end: hand the running session to the core.
 export async function closeSession() {
   saveCurrentSession();
+  // Clean exit: tell the service this is not a kill.
+  core?.emit('goodbye');
   const timeout = new Promise<void>((resolve) => setTimeout(resolve, 1_000));
   await Promise.race([core?.flushed(), timeout]);
 }

@@ -24,6 +24,9 @@ export type CoreApi = {
     session: ScreenTimeSession;
     foreground: { exeName: string | null; elapsedMs: number };
     leave: void;
+    // Sent when the app closes cleanly (quit, Windows session end). A connection
+    // that drops without it means the app was killed.
+    goodbye: void;
   };
 };
 

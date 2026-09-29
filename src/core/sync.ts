@@ -2,6 +2,7 @@ import type { CommandResult, Rules, SyncInput, SyncResponse } from '../shared/ap
 import { executeCommand } from './commands';
 import { inventoryHash, scanInstalledApps } from './inventory';
 import { host } from './host';
+import { acknowledgeEvents, pendingEvents, pendingEventsCount } from './events-queue';
 import { acknowledgeScreenTime, pendingScreenTime, pendingScreenTimeCount } from './screen-time-queue';
 import type { Credentials } from './credentials';
 import { readJson, removeJson, writeJson } from './storage';
@@ -87,6 +88,8 @@ export function startSyncLoop(credentials: Credentials, callbacks: SyncCallbacks
     };
     const screenTime = pendingScreenTime();
     if (screenTime.length) body.screenTime = screenTime;
+    const events = pendingEvents();
+    if (events.length) body.events = events;
 
     let appsHash = state.appsHash;
     if (Date.now() - lastInventoryAt > INVENTORY_INTERVAL_MS) {
@@ -121,6 +124,7 @@ export function startSyncLoop(credentials: Credentials, callbacks: SyncCallbacks
     }
     await writeJson(STATE_FILE, next);
     if (screenTime.length) await acknowledgeScreenTime(screenTime.map((s) => s.id));
+    if (events.length) await acknowledgeEvents(events.map((e) => e.id));
     if (screenTime.length) lastScreenFlushAt = Date.now();
 
     callbacks.onSynced(new Date());
@@ -144,11 +148,13 @@ export function startSyncLoop(credentials: Credentials, callbacks: SyncCallbacks
 
       const revChanged = lastRev === null || heartbeat.rev !== lastRev;
       const hasResults = state.pendingResults.length > 0;
+      // Tamper events go up right away, not with the 15-min screen-time batch.
+      const hasEvents = pendingEventsCount() > 0;
       const screenPending = pendingScreenTimeCount();
       const flushDue = screenPending > 0 && Date.now() - lastScreenFlushAt > SLOW_FLUSH_MS;
       const forced = forceFlush && screenPending > 0;
       forceFlush = false;
-      const doSync = forced || heartbeat.fast || revChanged || hasResults || flushDue;
+      const doSync = forced || heartbeat.fast || revChanged || hasResults || hasEvents || flushDue;
 
       if (doSync) {
         const why = forced
@@ -159,7 +165,9 @@ export function startSyncLoop(credentials: Credentials, callbacks: SyncCallbacks
               ? '🔔 une règle/commande a changé'
               : hasResults
                 ? '📮 résultats de commande à remonter'
-                : `📦 lot de temps d'écran (${screenPending} sessions)`;
+                : hasEvents
+                  ? '🚨 événements de triche à remonter'
+                  : `📦 lot de temps d'écran (${screenPending} sessions)`;
         console.log(`[sync] ${why} → full sync`);
         const resultsPending = await syncOnce();
         lastRev = heartbeat.rev;

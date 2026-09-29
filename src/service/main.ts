@@ -2,6 +2,7 @@ import net from 'node:net';
 import { flushNow, getStatus, initAgent, shutdownAgent } from '../core/agent';
 import { setHost } from '../core/host';
 import { foregroundTick, ruledExes, runningTick, setEnforcementUser } from '../core/limits';
+import { recordEvent } from '../core/events-queue';
 import { addSession } from '../core/screen-time-queue';
 import type { AgentStatus, PairResult } from '../shared/agent-api';
 import type { ScreenTimeSession } from '../shared/api-types';
@@ -45,6 +46,10 @@ const monitoredClients = new Set<Client>();
 const isMonitored = (client: Client) => dev || monitoredClients.has(client);
 // Cached set of monitored SIDs, refreshed from config so a `monitor` change is picked up.
 let monitored = new Set<string>();
+// Clients that closed cleanly (sent 'goodbye'), and monitored SIDs whose app dropped
+// without one — i.e. killed. The supervisor turns the latter into an 'app_killed' event.
+const saidGoodbye = new WeakSet<Client>();
+const killedAppSids = new Set<string>();
 
 // UI requests go to the most recently connected session app.
 const latest = () => [...clients].at(-1);
@@ -156,6 +161,7 @@ const server = net.createServer((socket): void => {
       clientSids.set(client, id);
       const watched = monitored.has(id);
       if (watched) monitoredClients.add(client);
+      killedAppSids.delete(id); // the app is back
       void nameForSid(id).then((name) => {
         console.log(`[pipe] 👤 session app pour ${name} — ${dev ? 'dev (comptée)' : watched ? 'surveillée' : 'non surveillée (ignorée)'}`);
         // Limits close only this account's apps, never the parent's.
@@ -175,8 +181,11 @@ const server = net.createServer((socket): void => {
     })
     .on('leave', () => {
       if (isMonitored(client)) flushNow();
-    });
+    })
+    .on('goodbye', () => saidGoodbye.add(client));
   socket.on('close', () => {
+    const sid = clientSids.get(client);
+    if (!dev && sid && monitoredClients.has(client) && !saidGoodbye.has(client)) killedAppSids.add(sid);
     clients.delete(client);
     clientSids.delete(client);
     monitoredClients.delete(client);
@@ -227,12 +236,16 @@ void (async () => {
     const RELAUNCH_COOLDOWN_MS = 20_000;
     const supervise = async () => {
       const on = await loggedOnSids().catch(() => new Set<string>());
+      // Signed out: the app went away with the session, not a kill.
+      for (const sid of killedAppSids) if (!on.has(sid)) killedAppSids.delete(sid);
       const withApp = new Set([...monitoredClients].map((c) => clientSids.get(c)));
       for (const sid of monitored) {
         if (!on.has(sid) || withApp.has(sid)) continue;
         if (Date.now() - (relaunchAt.get(sid) ?? 0) < RELAUNCH_COOLDOWN_MS) continue;
         relaunchAt.set(sid, Date.now());
-        console.log(`[app] 🚀 (re)lancement de l'app de session pour ${await nameForSid(sid)}`);
+        const name = await nameForSid(sid);
+        if (killedAppSids.delete(sid)) recordEvent('app_killed', `L'app de session de ${name} a été fermée de force, puis relancée.`);
+        console.log(`[app] 🚀 (re)lancement de l'app de session pour ${name}`);
         await launchApp(sid).catch((e) => console.error('[app] lancement échoué', e));
       }
     };
