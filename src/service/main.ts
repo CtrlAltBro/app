@@ -13,6 +13,7 @@ import { lockUserSession, messageUser } from './session-control';
 import { nodeHost, type SessionLink } from './node-host';
 import { clearStaleBlocks } from './ifeo';
 import { launchApp, loggedOnSids, runningExesForUser, syncTasks } from './session-app';
+import { checkUncleanStop, markCleanStop, startTimeWatch } from './tamper';
 
 // The core in its own Node process (milestone 2). Today it runs as the current
 // user from a terminal (`npm run service`); milestone 3 runs it as a SYSTEM service.
@@ -132,6 +133,14 @@ function runningExesForSid(sid: string): Promise<Set<string>> {
   return exes;
 }
 
+// A just-launched exe can miss the cached tasklist for a tick or two, so only a
+// streak of rejected ticks on one connection is reported as spoofing (then at most
+// once per SPOOF_REPORT_MS per account).
+const SPOOF_STREAK = 3;
+const SPOOF_REPORT_MS = 10 * 60 * 1000;
+const spoofStreak = new WeakMap<Client, number>();
+const spoofReportedAt = new Map<string, number>();
+
 async function countForegroundTick(client: Client, exeName: string | null, elapsedMs: number) {
   // In dev everything runs as one user and there is no monitored SID to check against.
   if (dev) return foregroundTick(exeName, elapsedMs);
@@ -142,8 +151,18 @@ async function countForegroundTick(client: Client, exeName: string | null, elaps
     const running = sid ? await runningExesForSid(sid) : new Set<string>();
     if (!running.has(exeName.toLowerCase())) {
       console.log(`[pipe] 🕵️  tick ignoré : ${exeName} ne tourne pas dans la session (probable spoof)`);
+      const streak = (spoofStreak.get(client) ?? 0) + 1;
+      spoofStreak.set(client, streak);
+      if (sid && streak >= SPOOF_STREAK && Date.now() - (spoofReportedAt.get(sid) ?? 0) > SPOOF_REPORT_MS) {
+        spoofReportedAt.set(sid, Date.now());
+        recordEvent(
+          'pipe_spoof',
+          `Un programme se fait passer pour l'app de contrôle et envoie un faux usage (ex. « ${exeName} », qui ne tourne pas).`,
+        );
+      }
       return;
     }
+    spoofStreak.delete(client);
   }
   foregroundTick(exeName, elapsedMs);
 }
@@ -204,6 +223,8 @@ async function stop(reason: string) {
   stopping = true;
   console.log(`[service] 🛑 ${reason} → dernier envoi puis arrêt`);
   server.close();
+  // Clean stop: not a kill (and report an uninstall in progress), before the last upload.
+  if (!dev) await markCleanStop().catch((e) => console.error('[tamper] marqueur d’arrêt échoué', e));
   await shutdownAgent();
   process.exit(0);
 }
@@ -219,6 +240,11 @@ void (async () => {
   await initAgent();
   // Lift any app-launch blocks left over from a previous day (service off past midnight).
   if (!dev) await clearStaleBlocks().catch((e) => console.error('[ifeo] nettoyage échoué', e));
+  // After initAgent, so these land in the loaded event queue.
+  if (!dev) {
+    await checkUncleanStop().catch((e) => console.error('[tamper] vérification du dernier arrêt échouée', e));
+    startTimeWatch();
+  }
   const refreshMonitored = async () => {
     const next = new Set(await monitoredSids().catch(() => [...monitored]));
     if (!dev) await syncTasks(next, monitored).catch((e) => console.error('[app] synchro des tâches échouée', e));
