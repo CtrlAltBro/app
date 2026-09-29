@@ -13,7 +13,7 @@ import { lockUserSession, messageUser } from './session-control';
 import { nodeHost, type SessionLink } from './node-host';
 import { clearStaleBlocks } from './ifeo';
 import { launchApp, loggedOnSids, runningExesForUser, syncTasks } from './session-app';
-import { checkUncleanStop, markCleanStop, startTimeWatch } from './tamper';
+import { checkSafeMode, checkUncleanStop, ensureSafeBootStart, markCleanStop, startTimeWatch } from './tamper';
 
 // The core in its own Node process (milestone 2). Today it runs as the current
 // user from a terminal (`npm run service`); milestone 3 runs it as a SYSTEM service.
@@ -248,6 +248,8 @@ void (async () => {
   if (!dev) await clearStaleBlocks().catch((e) => console.error('[ifeo] nettoyage échoué', e));
   // After initAgent, so these land in the loaded event queue.
   if (!dev) {
+    await ensureSafeBootStart().catch((e) => console.error('[tamper] inscription mode sans échec échouée', e));
+    await checkSafeMode().catch((e) => console.error('[tamper] détection mode sans échec échouée', e));
     await checkUncleanStop().catch((e) => console.error('[tamper] vérification du dernier arrêt échouée', e));
     startTimeWatch();
   }

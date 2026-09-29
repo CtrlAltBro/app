@@ -17,8 +17,9 @@
   </serviceaccount>
 
   <startmode>Automatic</startmode>
-  <!-- Start once the network stack is up (the core talks to the API). -->
-  <depend>Tcpip</depend>
+  <!-- No service dependency: the core tolerates the network being down (it backs off
+       and retries), and depending on Tcpip would stop the service from starting in
+       minimal Safe Mode, where we want it to keep enforcing limits. -->
 
   <!-- Come back up if the process ever exits unexpectedly. -->
   <onfailure action="restart" delay="5 sec" />
