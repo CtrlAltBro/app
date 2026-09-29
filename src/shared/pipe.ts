@@ -27,6 +27,9 @@ export type CoreApi = {
     // Sent when the app closes cleanly (quit, Windows session end). A connection
     // that drops without it means the app was killed.
     goodbye: void;
+    // Windows is about to suspend (sleep / hibernate): not a tamper, the service tells
+    // the API so the dashboard doesn't flag the PC as silent.
+    suspend: void;
   };
 };
 

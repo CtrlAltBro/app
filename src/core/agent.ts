@@ -51,6 +51,16 @@ export const flushNow = () => void syncLoop?.flush();
 // PC resumed from sleep.
 export const syncNow = () => syncLoop?.syncNow();
 
+// PC going to sleep: say goodbye at once (one quick KV-only request, before Windows
+// suspends), so the dashboard shows it offline instead of "silent". Pending screen
+// time stays queued and goes up after wake.
+let lastSleepBye = 0;
+export function sleepNow() {
+  if (Date.now() - lastSleepBye < 10_000) return; // one goodbye per sleep
+  lastSleepBye = Date.now();
+  void syncLoop?.bye('sleep');
+}
+
 // App quit or Windows shutdown: keep the running session, then try to upload
 // everything within a short delay (anything left stays on disk for next start).
 let shuttingDown: Promise<void> | null = null;
