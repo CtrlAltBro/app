@@ -204,7 +204,10 @@ const server = net.createServer((socket): void => {
     .on('goodbye', () => saidGoodbye.add(client));
   socket.on('close', () => {
     const sid = clientSids.get(client);
-    if (!dev && sid && monitoredClients.has(client) && !saidGoodbye.has(client)) killedAppSids.add(sid);
+    // Dropped without 'goodbye' = killed, unless another app for this account is still
+    // connected (e.g. a fake client going away while the real app keeps running).
+    const othersForSid = [...monitoredClients].some((c) => c !== client && clientSids.get(c) === sid);
+    if (!dev && sid && monitoredClients.has(client) && !saidGoodbye.has(client) && !othersForSid) killedAppSids.add(sid);
     clients.delete(client);
     clientSids.delete(client);
     monitoredClients.delete(client);
