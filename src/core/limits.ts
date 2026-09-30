@@ -115,11 +115,16 @@ function overLimit(exeName: string, rule: AppRule | undefined): rule is AppRule 
 }
 
 // For the IFEO stub: the screen to show if the child may not start this exe right
-// now, or null if a launch block on it is stale and it may run.
-export function launchBlockText(exeName: string): TimeUpText | null {
+// now, or null if the launch block on it is stale. A stale block is lifted before
+// answering, so the exe's own helper processes are no longer caught once it starts.
+export async function launchBlockText(exeName: string): Promise<TimeUpText | null> {
   rolloverIfNewDay();
   const rule = rules.find((r) => r.exeName === exeName);
-  if (!overLimit(exeName, rule)) return null;
+  if (!overLimit(exeName, rule)) {
+    blockedByUs.delete(exeName);
+    await host().launchGuard.allow(exeName).catch(() => undefined);
+    return null;
+  }
   return blockedText(exeName, rule.mode === 'block' ? null : rule.dailyLimitMinutes);
 }
 
@@ -219,6 +224,8 @@ export function setLimitRules(next: Rules) {
 export async function startLimits(initialRules: Rules | null) {
   const saved = await readJson<Usage>(USAGE_FILE);
   usage = saved && saved.day === today() ? saved : { day: today(), ms: {} };
+  // Blocks set before a restart, so the rules below can lift the ones no longer due.
+  for (const exe of await host().launchGuard.blocked().catch(() => [])) blockedByUs.add(exe);
   if (initialRules) setLimitRules(initialRules);
   started = true;
 }

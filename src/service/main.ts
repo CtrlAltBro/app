@@ -179,10 +179,10 @@ const server = net.createServer((socket): void => {
     // IFEO blocks are machine-wide: only a monitored account is really kept out.
     // The SID is claimed, not proven, but faking it only gets what a hand-made IFEO
     // bypass already gets, and the child's session still kills the app on sight.
-    .handle('launchCheck', ({ sid, exeName }) => {
+    .handle('launchCheck', async ({ sid, exeName }) => {
       const exe = String(exeName).toLowerCase();
       if (!dev && !monitored.has(String(sid))) return { allowed: true };
-      const text = launchBlockText(exe);
+      const text = await launchBlockText(exe);
       console.log(`[ifeo] 🚪 lancement de ${exe} ${text ? 'refusé' : 'autorisé (blocage périmé)'}`);
       return text ? { allowed: false, text } : { allowed: true };
     })
