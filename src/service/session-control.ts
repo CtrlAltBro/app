@@ -18,6 +18,21 @@ export async function sessionIdForUser(user: string): Promise<number | null> {
   return null;
 }
 
+// Lowercased names of the accounts with a Windows session open (active, locked or
+// switched away from), or null if it could not be read. SSH logons are not listed.
+export async function sessionUsers(): Promise<string[] | null> {
+  // query.exe exits 1 when nobody is signed in, with "No User exists" on stderr.
+  const { stdout } = await run('query.exe', ['user'], { windowsHide: true }).catch((err: { stdout?: string; stderr?: string }) =>
+    /no user/i.test(err.stderr ?? '') ? { stdout: '' } : { stdout: null },
+  );
+  if (stdout === null) return null;
+  return stdout
+    .split(/\r?\n/)
+    .slice(1)
+    .map((line) => /^[>\s]*(\S+)/.exec(line)?.[1]?.toLowerCase())
+    .filter((name): name is string => !!name);
+}
+
 // Show a plain message box on the account's desktop (Windows Pro+). Best effort.
 export async function messageUser(user: string, text: string): Promise<boolean> {
   try {

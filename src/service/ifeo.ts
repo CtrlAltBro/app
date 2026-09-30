@@ -13,13 +13,18 @@ const run = promisify(execFile);
 // is removed at local midnight, on a parent reset, or when the rule goes away.
 //
 // IFEO is machine-wide and by image name, so we never touch a protected/system exe,
-// and we only ever remove keys we set ourselves (tracked in blocked.json).
+// and we only ever remove keys we set ourselves (tracked in blocked.json). It also
+// catches the parent: while an account we don't monitor has a session open, the
+// keys are lifted (pauseLaunchBlocks) and the child is held by the kill on sight
+// alone. The stub can't simply start the parent's app instead, as the relaunched
+// helper processes of a multi-process app (Edge…) lose what their parent handed them.
 
 const IFEO = 'HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options';
 const STATE_FILE = 'blocked.json';
 // What Windows launches in place of a blocked app: our own session app, as a stub
 // (src/main/blocked-launch.ts) that shows the blocked screen to a monitored account
-// and starts the real exe for anyone else. A GUI app, so no console flashes.
+// and starts the real exe for anyone else (the few seconds before a parent's new
+// session lifts the keys). A GUI app, so no console flashes.
 const blocker = () => path.join(process.env.ProgramFiles ?? 'C:\\Program Files', 'CtrlAltBro', 'app', 'ctrlaltbro.exe');
 
 type State = { day: string; exes: string[] };
@@ -44,8 +49,23 @@ async function currentDebugger(exeName: string): Promise<string | null> {
   }
 }
 
-// Stop `exeName` from launching (idempotent). Refuses protected/system exes and
-// won't overwrite a Debugger someone else set (e.g. a real debugging session).
+// True while a parent session is open: blocks are tracked but their keys are lifted.
+let paused = false;
+
+// Point the image's Debugger at our stub, unless someone else set one (e.g. a real
+// debugging session). Returns false when it left the image alone.
+async function setKey(exe: string): Promise<boolean> {
+  const existing = await currentDebugger(exe);
+  const ours = blocker();
+  if (existing && existing.replace(/^"|"$/g, '').toLowerCase() !== ours.toLowerCase()) {
+    console.warn(`[ifeo] ${exe} a déjà un Debugger tiers, je n'y touche pas`);
+    return false;
+  }
+  await run('reg.exe', ['add', keyFor(exe), '/v', 'Debugger', '/t', 'REG_SZ', '/d', `"${ours}"`, '/f'], { windowsHide: true });
+  return true;
+}
+
+// Stop `exeName` from launching (idempotent). Refuses protected/system exes.
 // Note: IFEO catches classic Win32 exes (browsers, games, most apps) but NOT
 // Store/UWP apps (their activation bypasses it); those are still held down by the
 // fallback kill-on-sight, just not prevented from relaunching (AppLocker later).
@@ -54,16 +74,25 @@ export async function blockLaunch(exeName: string) {
   if (isProtected(exe)) return;
   const state = await loadState();
   if (state.exes.includes(exe)) return; // already ours
-
-  const existing = await currentDebugger(exe);
-  const ours = blocker();
-  if (existing && existing.replace(/^"|"$/g, '').toLowerCase() !== ours.toLowerCase()) {
-    console.warn(`[ifeo] ${exe} a déjà un Debugger tiers, je n'y touche pas`);
-    return;
-  }
-  await run('reg.exe', ['add', keyFor(exe), '/v', 'Debugger', '/t', 'REG_SZ', '/d', `"${ours}"`, '/f'], { windowsHide: true });
+  if (!paused && !(await setKey(exe))) return;
   await saveState({ day: today(), exes: [...state.exes, exe] });
-  console.log(`[ifeo] 🚫 ${exe} bloqué au lancement jusqu'à minuit`);
+  console.log(`[ifeo] 🚫 ${exe} bloqué au lancement jusqu'à minuit${paused ? ' (dès que la session parent sera fermée)' : ''}`);
+}
+
+// Lift our keys while an unmonitored (parent) session is open, put them back once
+// it is closed. Called often by the service; only acts on a change.
+export async function pauseLaunchBlocks(pause: boolean) {
+  if (pause === paused) return;
+  paused = pause;
+  const { exes } = await loadState();
+  for (const exe of exes) await (pause ? unblock(exe) : setKey(exe));
+  if (exes.length) {
+    console.log(
+      pause
+        ? `[ifeo] ⏸️  session parent ouverte → ${exes.length} blocage(s) au lancement suspendu(s)`
+        : `[ifeo] ▶️  plus de session parent → ${exes.length} blocage(s) au lancement remis`,
+    );
+  }
 }
 
 // Remove the block on one image: delete our Debugger value, and the image's IFEO

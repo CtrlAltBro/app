@@ -9,9 +9,9 @@ import type { ScreenTimeSession } from '../shared/api-types';
 import { PIPE_PATH, PipeConnection, type CoreApi, type SessionApi } from '../shared/pipe';
 import { runCli } from './cli';
 import { monitoredSids, nameForSid } from './monitored';
-import { lockUserSession, messageUser } from './session-control';
+import { lockUserSession, messageUser, sessionUsers } from './session-control';
 import { nodeHost, type SessionLink } from './node-host';
-import { clearStaleBlocks } from './ifeo';
+import { clearStaleBlocks, pauseLaunchBlocks } from './ifeo';
 import { launchApp, loggedOnSids, runningExesForUser, syncTasks } from './session-app';
 import { checkSafeMode, checkUncleanStop, ensureSafeBootStart, markCleanStop, startTimeWatch } from './tamper';
 
@@ -263,15 +263,32 @@ void (async () => {
     await checkUncleanStop().catch((e) => console.error('[tamper] vérification du dernier arrêt échouée', e));
     startTimeWatch();
   }
+  // Lowercased names of the monitored accounts, to tell their sessions from the parent's.
+  let monitoredNames = new Set<string>();
   const refreshMonitored = async () => {
     const next = new Set(await monitoredSids().catch(() => [...monitored]));
     if (!dev) await syncTasks(next, monitored).catch((e) => console.error('[app] synchro des tâches échouée', e));
     monitored = next;
+    const names = await Promise.all([...next].map(nameForSid)).catch(() => null);
+    if (names) monitoredNames = new Set(names.map((n) => n.toLowerCase()));
   };
   await refreshMonitored();
   setInterval(() => void refreshMonitored(), 60_000).unref();
-  const names = await Promise.all([...monitored].map(nameForSid)).catch(() => [...monitored]);
+  const names = [...monitoredNames];
   console.log(`[service] 👁️  comptes surveillés : ${names.length ? names.join(', ') : '(aucun)'}${dev ? ' (dev: tout compté)' : ''}`);
+
+  // IFEO launch blocks catch every account: lift them while a parent session is
+  // open (even locked or switched away from), put them back when it is closed.
+  if (!dev) {
+    const checkParentSession = async () => {
+      const users = await sessionUsers().catch(() => null);
+      if (!users) return; // unreadable: keep the current state
+      const parentOn = users.some((u) => !monitoredNames.has(u));
+      await pauseLaunchBlocks(parentOn).catch((e) => console.error('[ifeo] suspension échouée', e));
+    };
+    setInterval(() => void checkParentSession(), 5_000).unref();
+    await checkParentSession();
+  }
 
   // Keep the session app running in each monitored, signed-in session: if the
   // child killed it, start it again through its launch task (dev: never launch).
