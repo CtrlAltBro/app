@@ -13,6 +13,7 @@ import { lockUserSession, messageUser, sessionUsers } from './session-control';
 import { nodeHost, type SessionLink } from './node-host';
 import { clearStaleBlocks, pauseLaunchBlocks } from './ifeo';
 import { launchApp, loggedOnSids, runningExesForUser, syncTasks } from './session-app';
+import { syncSitePolicies } from './site-policy';
 import { checkSafeMode, checkUncleanStop, ensureSafeBootStart, markCleanStop, startTimeWatch } from './tamper';
 
 // The core in its own Node process (milestone 2). Today it runs as the current
@@ -297,6 +298,8 @@ void (async () => {
     const RELAUNCH_COOLDOWN_MS = 20_000;
     const supervise = async () => {
       const on = await loggedOnSids().catch(() => new Set<string>());
+      // Blocked sites go into each signed-in child's hive (loaded only while signed in).
+      await syncSitePolicies([...monitored].filter((sid) => on.has(sid)));
       // Signed out: the app went away with the session, not a kill.
       for (const sid of killedAppSids) if (!on.has(sid)) killedAppSids.delete(sid);
       const withApp = new Set([...monitoredClients].map((c) => clientSids.get(c)));
