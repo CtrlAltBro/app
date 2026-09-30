@@ -4,7 +4,7 @@ import type { AgentStatus } from '../shared/agent-api';
 import type { SessionApi, TimeUpText } from '../shared/pipe';
 import { allowAll, allowLaunch, blockedExes, blockLaunch } from './ifeo';
 import { runPowerShell, runPowerShellSync } from './powershell';
-import { setBlockedSites } from './site-policy';
+import { setBrowserPolicy } from './site-policy';
 
 const noGuard = { async block() {}, async allow() {}, async allowAll() {}, blocked: async (): Promise<string[]> => [] };
 
@@ -84,6 +84,6 @@ export function nodeHost({
     },
     // In dev (core run as the user) we don't touch the machine-wide IFEO keys.
     launchGuard: dev ? noGuard : { block: blockLaunch, allow: allowLaunch, allowAll, blocked: blockedExes },
-    sitePolicy: { setBlockedSites: dev ? () => undefined : setBlockedSites },
+    browserPolicy: { set: dev ? () => undefined : setBrowserPolicy },
   };
 }

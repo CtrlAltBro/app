@@ -11,8 +11,11 @@ export type AppRule = {
   usageResetAt?: string | null;
 };
 export type SiteRule = { pattern: string };
+// Content filters forced in the child's browsers.
+export type Filters = { safeSearch: boolean; youtube: 'off' | 'moderate' | 'strict' };
 // day: the PC's local date the usage above belongs to (YYYY-MM-DD).
-export type Rules = { version: number; apps: AppRule[]; sites: SiteRule[]; day?: string };
+// filters: absent from an older API or older cached rules (= all off).
+export type Rules = { version: number; apps: AppRule[]; sites: SiteRule[]; filters?: Filters; day?: string };
 
 export type Command =
   | { id: string; type: 'kill_app'; payload: { exeName: string } }
