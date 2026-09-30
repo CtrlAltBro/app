@@ -44,6 +44,11 @@ export type Host = {
     allow(exeName: string): Promise<void>;
     allowAll(): Promise<void>;
   };
+  // Websites to block for the monitored children (browser policies, applied by the
+  // service to each child's session). A no-op in dev.
+  sitePolicy: {
+    setBlockedSites(patterns: string[]): void;
+  };
 };
 
 let current: Host | null = null;

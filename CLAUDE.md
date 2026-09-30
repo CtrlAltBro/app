@@ -24,6 +24,7 @@ Parental-control agent that runs on the child's Windows PC. Pairs with an accoun
 | `src/service/session-app.ts` | Per-account scheduled task (InteractiveToken) that launches the packaged app in the child's session at logon and on demand (`schtasks /run`); `loggedOnSids()` from HKEY_USERS; `runningExesForUser()` for the limit fallback |
 | `src/service/ifeo.ts` | Blocks a limited app from launching once its limit is hit (IFEO `Debugger` → our app), removed at local midnight / on reset; refuses protected exes, tracks its keys in `blocked.json`. The keys are lifted while an unmonitored (parent) account has a Windows session open (`query user`, checked every 5 s) and put back once it is closed |
 | `src/main/blocked-launch.ts` | IFEO stub: when Windows starts `ctrlaltbro.exe <target>`, asks the service (`launchCheck`) and shows the blocked screen to a monitored account, or starts the real exe for anyone else without re-triggering IFEO (`DEBUG_ONLY_THIS_PROCESS` then detach; UAC for an exe needing elevation). Service unreachable: only Administrators get through |
+| `src/service/site-policy.ts` | Blocked websites: Edge `URLBlocklist` (+ `InPrivateModeAvailability = 1`) written into each signed-in monitored child's hive `HKU\<SID>\Software\Policies\Microsoft\Edge` by the supervisor, rewritten only on change; the parent's Edge is untouched. Cleared on unpair and by `preuninstall.ps1` |
 | `src/service/cli.ts` | Admin one-shot commands: `pair` / `unpair` / `status` / `monitor` |
 | `src/shared/pipe.ts` | Pipe protocol: JSON lines, typed requests (with reply) and events, both ways |
 | `src/main/core-client.ts` | Session app side of the pipe: reconnects every 2 s, relays status to the window, forwards the foreground sensor while paired (sessions buffered while the core is down), shows messages / time-up screen on request |
@@ -88,7 +89,8 @@ Collect (then send through `/sync`, queued on disk until a sync succeeds):
 Enforce (reconcile with the cached rules; remember what the agent set up so removed rules are undone):
 - [x] App block: kill on sight in the child's session, then IFEO `Debugger` key → the session app's exe as a stub (`src/main/blocked-launch.ts`): blocked screen for a monitored account; the keys are lifted while a parent session is open (pitfall 10).
 - [x] Daily limit: local per-app counter, reset at local midnight, kill + "time's up" screen once the limit is reached.
-- [ ] Site block: Edge `URLBlocklist` policy, restart Edge to apply, `InPrivateModeAvailability = 1`. Prefer the per-user key `HKU\<child SID>\Software\Policies\Microsoft\Edge` (read-only for the user, so the parent's Edge is not affected; verify on the VM) over `HKLM`.
+- [x] Site block, Edge: `URLBlocklist` + `InPrivateModeAvailability = 1` in the child's own hive (`src/service/site-policy.ts`), so the parent's Edge is not affected.
+- [ ] Site block, other browsers: Chrome / Brave / Vivaldi (same Chromium policies, other keys), Firefox (its own policies); browsers without usable policies (Opera, Yandex, Tor…) blocked as apps by default.
 - [x] Commands: `kill_app` (taskkill, refuses protected exes), `lock_session` (`rundll32 user32.dll,LockWorkStation`).
 
 ## Target architecture: service + session app (next big project)
