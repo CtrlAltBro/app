@@ -33,7 +33,7 @@ function startSync(creds: Credentials) {
   syncLoop?.stop();
   // Enforce with the rules cached from the last sync, so limits apply at startup even offline.
   void cachedRules().then((rules) => {
-    if (rules) host().sitePolicy.setBlockedSites(rules.sites.map((s) => s.pattern));
+    if (rules) host().browserPolicy.set(rules);
     return startLimits(rules);
   });
   syncLoop = startSyncLoop(creds, {
@@ -42,7 +42,7 @@ function startSync(creds: Credentials) {
     onRules: (rules) => {
       console.log(`Rules v${rules.version}:`, JSON.stringify(rules));
       setLimitRules(rules);
-      host().sitePolicy.setBlockedSites(rules.sites.map((s) => s.pattern));
+      host().browserPolicy.set(rules);
     },
     onUnauthorized: () => void unpair(),
   });
@@ -94,7 +94,7 @@ async function unpair() {
   await clearScreenTime();
   await clearEvents();
   await stopLimits();
-  host().sitePolicy.setBlockedSites([]);
+  host().browserPolicy.set(null);
   credentials = null;
   syncState = { lastSyncAt: null, error: null };
   await clearCredentials();
@@ -108,7 +108,7 @@ export async function initAgent() {
   credentials = await loadCredentials();
   if (credentials) startSync(credentials);
   // Not paired (e.g. unpaired by the admin CLI): lift the sites the last pairing blocked.
-  else host().sitePolicy.setBlockedSites([]);
+  else host().browserPolicy.set(null);
 }
 
 export const isPaired = () => credentials !== null;

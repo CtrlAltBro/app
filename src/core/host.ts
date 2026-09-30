@@ -1,4 +1,5 @@
 import type { AgentStatus } from '../shared/agent-api';
+import type { Rules } from '../shared/api-types';
 import type { TimeUpText } from '../shared/pipe';
 
 // Everything the core needs from the process it runs in. The core never imports
@@ -46,10 +47,11 @@ export type Host = {
     // Exes currently blocked (kept on disk across restarts).
     blocked(): Promise<string[]>;
   };
-  // Websites to block for the monitored children (browser policies, applied by the
-  // service to each child's session). A no-op in dev.
-  sitePolicy: {
-    setBlockedSites(patterns: string[]): void;
+  // Browser filtering for the monitored children (blocked sites, SafeSearch, YouTube
+  // restricted), from the rules; null lifts it (unpaired). Applied by the service to
+  // each child's session; a no-op in dev.
+  browserPolicy: {
+    set(rules: Rules | null): void;
   };
 };
 

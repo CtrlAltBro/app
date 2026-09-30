@@ -44,7 +44,9 @@ function Clear-SitePolicy([string]$root) {
   foreach ($b in $browsers) {
     $key = "Registry::$root\Software\Policies\$b"
     Remove-Item "$key\URLBlocklist" -Recurse -Force -ErrorAction SilentlyContinue
-    foreach ($name in @('InPrivateModeAvailability', 'IncognitoModeAvailability', 'TorDisabled')) {
+    $names = @('InPrivateModeAvailability', 'IncognitoModeAvailability', 'TorDisabled',
+      'ForceGoogleSafeSearch', 'ForceBingSafeSearch', 'ForceYouTubeRestrict')
+    foreach ($name in $names) {
       Remove-ItemProperty $key -Name $name -ErrorAction SilentlyContinue
     }
   }

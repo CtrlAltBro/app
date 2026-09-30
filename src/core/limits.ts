@@ -104,7 +104,7 @@ function blockedText(exeName: string, minutes: number | null): TimeUpText {
     return {
       title: 'Navigateur bloqué',
       app: label(exeName),
-      detail: 'Ce navigateur ne permet pas de filtrer les sites. Utilise Microsoft Edge.',
+      detail: 'Ce navigateur ne permet pas le filtrage choisi par tes parents. Utilise Microsoft Edge.',
     };
   }
   return minutes === null
