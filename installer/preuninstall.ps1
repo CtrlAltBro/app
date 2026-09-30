@@ -37,12 +37,17 @@ Get-ChildItem $ifeo -ErrorAction SilentlyContinue | ForEach-Object {
   }
 }
 
-# Remove the blocked-sites Edge policy we wrote into each account's hive. A signed-out
-# account's hive is loaded temporarily to clean it too.
+# Remove the blocked-sites browser policies we wrote into each account's hive (see
+# src/service/site-policy.ts). A signed-out account's hive is loaded temporarily.
 function Clear-SitePolicy([string]$root) {
-  $edge = "Registry::$root\Software\Policies\Microsoft\Edge"
-  Remove-Item "$edge\URLBlocklist" -Recurse -Force -ErrorAction SilentlyContinue
-  Remove-ItemProperty $edge -Name InPrivateModeAvailability -ErrorAction SilentlyContinue
+  $browsers = @('Microsoft\Edge', 'Google\Chrome', 'Chromium', 'BraveSoftware\Brave', 'Vivaldi')
+  foreach ($b in $browsers) {
+    $key = "Registry::$root\Software\Policies\$b"
+    Remove-Item "$key\URLBlocklist" -Recurse -Force -ErrorAction SilentlyContinue
+    foreach ($name in @('InPrivateModeAvailability', 'IncognitoModeAvailability', 'TorDisabled')) {
+      Remove-ItemProperty $key -Name $name -ErrorAction SilentlyContinue
+    }
+  }
 }
 $profiles = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList"
 Get-ChildItem $profiles -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -like 'S-1-5-21-*' } | ForEach-Object {
