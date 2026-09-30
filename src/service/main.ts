@@ -1,7 +1,7 @@
 import net from 'node:net';
 import { flushNow, getStatus, initAgent, shutdownAgent, sleepNow } from '../core/agent';
 import { setHost } from '../core/host';
-import { foregroundTick, launchBlockText, ruledExes, runningTick, screenTick, setEnforcementUser } from '../core/limits';
+import { foregroundTick, isEnforced, launchBlockText, ruledExes, runningTick, screenTick, setEnforcementUser } from '../core/limits';
 import { scheduleState } from '../core/schedule';
 import { recordEvent } from '../core/events-queue';
 import { addSession } from '../core/screen-time-queue';
@@ -10,10 +10,11 @@ import type { ScreenTimeSession } from '../shared/api-types';
 import { PIPE_PATH, PipeConnection, type CoreApi, type SessionApi } from '../shared/pipe';
 import { runCli } from './cli';
 import { monitoredSids, nameForSid } from './monitored';
-import { lockUserSession, messageUser, sessionUsers } from './session-control';
+import { lockUserSession, messageUser, sessionIdForUser, sessionUsers } from './session-control';
 import { nodeHost, type SessionLink } from './node-host';
 import { clearStaleBlocks, pauseLaunchBlocks } from './ifeo';
-import { launchApp, loggedOnSids, runningExesForUser, syncTasks } from './session-app';
+import { killPids, launchApp, loggedOnSids, runningProcessesForSession, syncTasks } from './session-app';
+import { identify, type Identity } from './app-identity';
 import { syncSitePolicies } from './site-policy';
 import { checkSafeMode, checkUncleanStop, ensureSafeBootStart, markCleanStop, startTimeWatch } from './tamper';
 
@@ -125,14 +126,36 @@ setHost(nodeHost({ dev, session, health }));
 // ticks. We never trust the pipe to decide that a limited app is being used: a tick
 // is counted only for an exe that is really running under the reporting account.
 // tasklist is cached per SID for a few seconds so the 5 s ticks don't each shell out.
+// A scan of a session's processes: the actual image names running (for the spoof
+// cross-check), a map from each running name to the rule key it counts as (an exe's
+// canonical identity, so a renamed copy maps back — issue #18), and the identities
+// with their PIDs (to close a renamed blocked app).
+type Scan = { names: Set<string>; toCanonical: Map<string, string>; identities: (Identity & { pid: number })[] };
+const emptyScan = (): Scan => ({ names: new Set(), toCanonical: new Map(), identities: [] });
+
 const RUNNING_TTL_MS = 5_000;
-const runningCache = new Map<string, { at: number; exes: Promise<Set<string>> }>();
-function runningExesForSid(sid: string): Promise<Set<string>> {
+const runningCache = new Map<string, { at: number; scan: Promise<Scan> }>();
+function scanSession(sid: string): Promise<Scan> {
   const hit = runningCache.get(sid);
-  if (hit && Date.now() - hit.at < RUNNING_TTL_MS) return hit.exes;
-  const exes = nameForSid(sid).then((name) => runningExesForUser(name)).catch(() => new Set<string>());
-  runningCache.set(sid, { at: Date.now(), exes });
-  return exes;
+  if (hit && Date.now() - hit.at < RUNNING_TTL_MS) return hit.scan;
+  const scan = (async (): Promise<Scan> => {
+    const name = await nameForSid(sid);
+    const sessionId = await sessionIdForUser(name);
+    if (sessionId == null) return emptyScan();
+    const procs = await runningProcessesForSession(sessionId).catch(() => []);
+    const byPid = await identify(procs);
+    const out = emptyScan();
+    for (const p of procs) {
+      const id = byPid.get(p.pid);
+      if (!id) continue;
+      out.names.add(id.name);
+      out.toCanonical.set(id.name, id.canonical);
+      out.identities.push({ ...id, pid: p.pid });
+    }
+    return out;
+  })().catch(() => emptyScan());
+  runningCache.set(sid, { at: Date.now(), scan });
+  return scan;
 }
 
 // A just-launched exe can miss the cached tasklist for a tick or two, so only a
@@ -150,8 +173,8 @@ async function countForegroundTick(client: Client, exeName: string | null, elaps
   // so the day rollover still runs; it counts nothing.
   if (exeName) {
     const sid = clientSids.get(client);
-    const running = sid ? await runningExesForSid(sid) : new Set<string>();
-    if (!running.has(exeName.toLowerCase())) {
+    const scan = sid ? await scanSession(sid) : emptyScan();
+    if (!scan.names.has(exeName.toLowerCase())) {
       console.log(`[pipe] 🕵️  tick ignoré : ${exeName} ne tourne pas dans la session (probable spoof)`);
       const streak = (spoofStreak.get(client) ?? 0) + 1;
       spoofStreak.set(client, streak);
@@ -165,6 +188,9 @@ async function countForegroundTick(client: Client, exeName: string | null, elaps
       return;
     }
     spoofStreak.delete(client);
+    // Count under the app's canonical name, so a renamed copy counts as the original.
+    foregroundTick(scan.toCanonical.get(exeName.toLowerCase()) ?? exeName, elapsedMs);
+    return;
   }
   foregroundTick(exeName, elapsedMs);
 }
@@ -332,8 +358,9 @@ void (async () => {
         anySignedInWithoutApp = true;
         if (!ruled.size) continue;
         const name = await nameForSid(sid);
-        const running = await runningExesForUser(name);
-        const hits = [...ruled].filter((exe) => running.has(exe));
+        // Count each running ruled app under its canonical name (a renamed copy too).
+        const scan = await scanSession(sid);
+        const hits = [...new Set([...scan.toCanonical.values()].filter((c) => ruled.has(c)))];
         if (!hits.length) continue;
         console.log(`[limits] 🛟 app absente pour ${name}, comptage secours : ${hits.join(', ')}`);
         setEnforcementUser(name);
@@ -345,6 +372,31 @@ void (async () => {
       if (anySignedInWithoutApp) screenTick(FALLBACK_MS);
     };
     setInterval(() => void fallback(), FALLBACK_MS).unref();
+
+    // Close a renamed or copied blocked app (issue #18): the foreground/fallback count
+    // it under its real identity, but IFEO blocks by file name only, so a renamed copy
+    // still starts. Here the service kills any running process whose canonical app is
+    // blocked (or over its limit) while its file name differs, and warns the parent.
+    const renamedReportedAt = new Map<string, number>();
+    const RENAME_REPORT_MS = 10 * 60 * 1000;
+    const killRenamed = async () => {
+      const on = await loggedOnSids().catch(() => new Set<string>());
+      for (const sid of monitored) {
+        if (!on.has(sid)) continue;
+        const scan = await scanSession(sid);
+        for (const id of scan.identities) {
+          if (!id.renamed || !isEnforced(id.canonical)) continue;
+          console.log(`[limits] 🎭 ${id.canonical} lancé sous le nom ${id.name} → fermeture`);
+          await killPids([id.pid]).catch(() => undefined);
+          const key = `${sid}|${id.canonical}`;
+          if (Date.now() - (renamedReportedAt.get(key) ?? 0) > RENAME_REPORT_MS) {
+            renamedReportedAt.set(key, Date.now());
+            recordEvent('app_renamed', `${id.canonical} a été relancé sous le nom « ${id.name} » pour contourner le blocage.`);
+          }
+        }
+      }
+    };
+    setInterval(() => void killRenamed(), 5_000).unref();
 
     // Enforce the time schedule: outside the allowed hours or once the day's total is
     // used up, lock the child's session (it goes back to the sign-in screen; logging

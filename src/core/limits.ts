@@ -163,6 +163,14 @@ export function runningTick(exeName: string, elapsedMs: number) {
 // Exe names that carry a rule, so the service only counts those in the fallback.
 export const ruledExes = () => new Set(rules.map((r) => r.exeName));
 
+// Should this app be closed right now: a block rule, or its daily limit is used up.
+// Used by the service to kill a renamed copy of a blocked app (issue #18).
+export function isEnforced(exeName: string): boolean {
+  if (!started) return false;
+  rolloverIfNewDay();
+  return overLimit(exeName, rules.find((r) => r.exeName === exeName));
+}
+
 // Fallback from the service when the session app is down: count screen-on time toward
 // the day's total (coarse, but killing the app must not pause the schedule's cap).
 export function screenTick(elapsedMs: number) {

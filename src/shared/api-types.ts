@@ -59,7 +59,8 @@ export type TamperEventType =
   | 'timezone_changed'
   | 'pipe_spoof'
   | 'safe_mode'
-  | 'uninstall';
+  | 'uninstall'
+  | 'app_renamed';
 
 export type TamperEvent = { id: string; type: TamperEventType; at: string; detail?: string };
 
