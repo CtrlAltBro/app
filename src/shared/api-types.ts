@@ -13,9 +13,24 @@ export type AppRule = {
 export type SiteRule = { pattern: string };
 // Content filters forced in the child's browsers.
 export type Filters = { safeSearch: boolean; youtube: 'off' | 'moderate' | 'strict' };
+// Time schedule enforced by locking the child's session. Weekday keys are getDay()
+// as strings ("0" = Sunday … "6" = Saturday); a weekday absent from `days` is free.
+export type TimeWindow = { from: string; to: string }; // local "HH:MM"
+export type DaySchedule = { windows: TimeWindow[]; maxMinutes: number | null };
+export type Schedule = { days: Record<string, DaySchedule> };
 // day: the PC's local date the usage above belongs to (YYYY-MM-DD).
 // filters: absent from an older API or older cached rules (= all off).
-export type Rules = { version: number; apps: AppRule[]; sites: SiteRule[]; filters?: Filters; day?: string };
+// schedule / screen: absent from an older API. screen = total screen time used today
+// (all apps) and the parent's extra minutes for the day.
+export type Rules = {
+  version: number;
+  apps: AppRule[];
+  sites: SiteRule[];
+  filters?: Filters;
+  schedule?: Schedule;
+  screen?: { usedTodaySeconds: number; extraMinutes: number };
+  day?: string;
+};
 
 export type Command =
   | { id: string; type: 'kill_app'; payload: { exeName: string } }

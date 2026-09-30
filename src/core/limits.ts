@@ -27,11 +27,16 @@ type Usage = {
   day: string;
   // Foreground milliseconds per exeName since local midnight.
   ms: Record<string, number>;
+  // Total foreground milliseconds today (all apps), for the schedule's screen-time cap.
+  total?: number;
   // exeName → latest parent reset already applied, so each reset is applied once.
   resets?: Record<string, string>;
 };
 
 let usage: Usage = { day: today(), ms: {} };
+
+// Total screen time used today (all apps), for src/core/schedule.ts.
+export const totalUsedMs = () => usage.total ?? 0;
 let rules: AppRule[] = [];
 // Unfiltered browsers blocked because sites are (not by a parent's rule), for the message.
 let autoBlocked = new Set<string>();
@@ -70,7 +75,7 @@ const blockedByUs = new Set<string>();
 function rolloverIfNewDay() {
   const day = today();
   if (day === usage.day) return;
-  usage = { day, ms: {} };
+  usage = { day, ms: {}, total: 0 };
   warned.clear();
   blockedByUs.clear();
   void host().launchGuard.allowAll().catch((err) => console.error('[limits] levée des blocages échouée:', err));
@@ -158,11 +163,21 @@ export function runningTick(exeName: string, elapsedMs: number) {
 // Exe names that carry a rule, so the service only counts those in the fallback.
 export const ruledExes = () => new Set(rules.map((r) => r.exeName));
 
+// Fallback from the service when the session app is down: count screen-on time toward
+// the day's total (coarse, but killing the app must not pause the schedule's cap).
+export function screenTick(elapsedMs: number) {
+  if (!started) return;
+  rolloverIfNewDay();
+  usage.total = (usage.total ?? 0) + elapsedMs;
+  if (Date.now() - lastPersistAt > PERSIST_EVERY_MS) void persist();
+}
+
 // Add elapsed time to an app's daily counter and enforce its rule.
 function account(exeName: string, elapsedMs: number) {
   // Count every app, not only limited ones: a limit added mid-day must see the
   // time already spent today, like the dashboard does.
   const used = (usage.ms[exeName] = (usage.ms[exeName] ?? 0) + elapsedMs);
+  usage.total = (usage.total ?? 0) + elapsedMs; // for the schedule's total cap
   if (Date.now() - lastPersistAt > PERSIST_EVERY_MS) void persist();
 
   const rule = rules.find((r) => r.exeName === exeName);
@@ -194,6 +209,11 @@ function account(exeName: string, elapsedMs: number) {
 //   the limit existed still counts (the API lags behind by the unsent sessions).
 function mergeServerUsage(next: Rules) {
   if (next.day !== usage.day) return; // usage from another day, or an old API
+  // Total screen time: keep the higher of local and server, so it survives a restart
+  // or reinstall (the server counts from the uploaded sessions).
+  if (next.screen && next.screen.usedTodaySeconds * 1000 > (usage.total ?? 0)) {
+    usage.total = next.screen.usedTodaySeconds * 1000;
+  }
   const resets = (usage.resets ??= {});
   for (const rule of next.apps) {
     if (rule.usedTodaySeconds === undefined) continue;
