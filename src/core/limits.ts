@@ -1,5 +1,6 @@
 import type { AppRule, Rules } from '../shared/api-types';
 import type { TimeUpText } from '../shared/pipe';
+import { withUnfilteredBrowsers } from './browsers';
 import { killApp } from './commands';
 import { host } from './host';
 import { knownAppName } from './inventory';
@@ -32,6 +33,8 @@ type Usage = {
 
 let usage: Usage = { day: today(), ms: {} };
 let rules: AppRule[] = [];
+// Unfiltered browsers blocked because sites are (not by a parent's rule), for the message.
+let autoBlocked = new Set<string>();
 let started = false;
 // Account whose apps limits may close (the monitored child). null = don't scope,
 // i.e. any session — used only in dev when running everything as one user.
@@ -97,6 +100,13 @@ function enforce(exeName: string, minutes: number | null) {
 }
 
 function blockedText(exeName: string, minutes: number | null): TimeUpText {
+  if (autoBlocked.has(exeName)) {
+    return {
+      title: 'Navigateur bloqué',
+      app: label(exeName),
+      detail: 'Ce navigateur ne permet pas de filtrer les sites. Utilise Microsoft Edge.',
+    };
+  }
   return minutes === null
     ? { title: 'Application bloquée', app: label(exeName), detail: 'Tes parents ont bloqué cette application sur ce PC.' }
     : {
@@ -206,7 +216,8 @@ function mergeServerUsage(next: Rules) {
 
 // Replace the rules the limits act on. Called from agent.ts at each rules change.
 export function setLimitRules(next: Rules) {
-  rules = next.apps;
+  rules = withUnfilteredBrowsers(next);
+  autoBlocked = new Set(rules.slice(next.apps.length).map((r) => r.exeName));
   rolloverIfNewDay();
   mergeServerUsage(next);
   // Lift a block that no longer applies: rule removed, or the limit was raised
