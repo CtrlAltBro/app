@@ -1,15 +1,10 @@
 import { app, BrowserWindow, Menu, nativeImage, Tray } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
+import { interceptedLaunch, runInterceptedLaunch } from './main/blocked-launch';
 import { closeSession, connectCore } from './main/core-client';
 import { registerAgentIpc } from './main/ipc';
 import { TRAY_ICON_PNG } from './main/tray-icon';
-
-// One instance only: a second launch just reveals the existing window. The service
-// relies on this so relaunching the app never spawns a duplicate.
-if (!app.requestSingleInstanceLock() || started) {
-  app.quit();
-}
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -74,30 +69,44 @@ function createTray() {
   tray.on('click', showWindow);
 }
 
-// Hand the running screen-time session to the core before quitting.
-let quitReady = false;
-app.on('before-quit', (event) => {
-  quitting = true;
-  if (quitReady) return;
-  event.preventDefault();
-  void closeSession().finally(() => {
-    quitReady = true;
-    app.quit();
+function startSessionApp() {
+  // Hand the running screen-time session to the core before quitting.
+  let quitReady = false;
+  app.on('before-quit', (event) => {
+    quitting = true;
+    if (quitReady) return;
+    event.preventDefault();
+    void closeSession().finally(() => {
+      quitReady = true;
+      app.quit();
+    });
   });
-});
 
-app.on('second-instance', showWindow);
+  app.on('second-instance', showWindow);
 
-app.on('ready', () => {
-  registerAgentIpc();
-  connectCore();
-  createTray();
-  createWindow();
-});
+  app.on('ready', () => {
+    registerAgentIpc();
+    connectCore();
+    createTray();
+    createWindow();
+  });
 
-// Stay alive in the tray when the window is closed/hidden; the service owns our lifecycle.
-app.on('window-all-closed', () => undefined);
+  // Stay alive in the tray when the window is closed/hidden; the service owns our lifecycle.
+  app.on('window-all-closed', () => undefined);
 
-app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) createWindow();
-});
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
+}
+
+// Started by Windows in place of a blocked app (IFEO): a short-lived stub, not the
+// session app (see main/blocked-launch.ts).
+const intercepted = interceptedLaunch();
+if (intercepted) {
+  runInterceptedLaunch(intercepted);
+} else {
+  // One instance only: a second launch just reveals the existing window. The service
+  // relies on this so relaunching the app never spawns a duplicate.
+  if (!app.requestSingleInstanceLock() || started) app.quit();
+  startSessionApp();
+}

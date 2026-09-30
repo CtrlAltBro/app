@@ -1,4 +1,5 @@
 import type { AppRule, Rules } from '../shared/api-types';
+import type { TimeUpText } from '../shared/pipe';
 import { killApp } from './commands';
 import { host } from './host';
 import { knownAppName } from './inventory';
@@ -91,16 +92,35 @@ function enforce(exeName: string, minutes: number | null) {
     // Stop it being reopened (even if the session app is killed), until midnight / reset.
     blockedByUs.add(exeName);
     void host().launchGuard.block(exeName).catch((err) => console.error('[limits] blocage échoué:', err));
-    host().ui.showTimeUp(
-      minutes === null
-        ? { title: 'Application bloquée', app: label(exeName), detail: "Tes parents ont bloqué cette application sur ce PC." }
-        : {
-            title: 'Temps écoulé',
-            app: label(exeName),
-            detail: `Tu as utilisé tes ${minutes} min d'aujourd'hui. On se retrouve demain !`,
-          },
-    );
+    host().ui.showTimeUp(blockedText(exeName, minutes));
   })().catch((err) => console.error('[limits] fermeture échouée:', err));
+}
+
+function blockedText(exeName: string, minutes: number | null): TimeUpText {
+  return minutes === null
+    ? { title: 'Application bloquée', app: label(exeName), detail: 'Tes parents ont bloqué cette application sur ce PC.' }
+    : {
+        title: 'Temps écoulé',
+        app: label(exeName),
+        detail: `Tu as utilisé tes ${minutes} min d'aujourd'hui. On se retrouve demain !`,
+      };
+}
+
+// Is the exe off-limits for the rest of today: blocked, or its daily limit used up.
+function overLimit(exeName: string, rule: AppRule | undefined): rule is AppRule {
+  return (
+    !!rule &&
+    (rule.mode === 'block' || (rule.dailyLimitMinutes != null && (usage.ms[exeName] ?? 0) >= rule.dailyLimitMinutes * 60_000))
+  );
+}
+
+// For the IFEO stub: the screen to show if the child may not start this exe right
+// now, or null if a launch block on it is stale and it may run.
+export function launchBlockText(exeName: string): TimeUpText | null {
+  rolloverIfNewDay();
+  const rule = rules.find((r) => r.exeName === exeName);
+  if (!overLimit(exeName, rule)) return null;
+  return blockedText(exeName, rule.mode === 'block' ? null : rule.dailyLimitMinutes);
 }
 
 // One tick from the foreground sensor: the counted app and the time since the last tick.
@@ -187,12 +207,7 @@ export function setLimitRules(next: Rules) {
   // Lift a block that no longer applies: rule removed, or the limit was raised
   // above the time already used.
   for (const exe of [...blockedByUs]) {
-    const rule = rules.find((r) => r.exeName === exe);
-    const stillBlocked =
-      !!rule &&
-      (rule.mode === 'block' ||
-        (rule.dailyLimitMinutes != null && (usage.ms[exe] ?? 0) >= rule.dailyLimitMinutes * 60_000));
-    if (!stillBlocked) {
+    if (!overLimit(exe, rules.find((r) => r.exeName === exe))) {
       blockedByUs.delete(exe);
       void host().launchGuard.allow(exe).catch(() => undefined);
     }

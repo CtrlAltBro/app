@@ -15,6 +15,9 @@ export type CoreApi = {
   requests: {
     getStatus: [void, AgentStatus];
     pair: [{ code: string; name: string }, PairResult];
+    // From the IFEO stub: may this account start this blocked exe? `text` is the
+    // screen to show when it may not.
+    launchCheck: [{ sid: string; exeName: string }, { allowed: boolean; text?: TimeUpText }];
   };
   events: {
     // Sent first on connect: which Windows account this session app runs as, so

@@ -1,7 +1,7 @@
 import net from 'node:net';
 import { flushNow, getStatus, initAgent, shutdownAgent, sleepNow } from '../core/agent';
 import { setHost } from '../core/host';
-import { foregroundTick, ruledExes, runningTick, setEnforcementUser } from '../core/limits';
+import { foregroundTick, launchBlockText, ruledExes, runningTick, setEnforcementUser } from '../core/limits';
 import { recordEvent } from '../core/events-queue';
 import { addSession } from '../core/screen-time-queue';
 import type { AgentStatus, PairResult } from '../shared/agent-api';
@@ -175,6 +175,16 @@ const server = net.createServer((socket): void => {
     .handle('getStatus', () => getStatus())
     // The child must not pair from their session: pairing is an admin command.
     .handle('pair', (): PairResult => ({ ok: false, error: "L'appairage se fait par l'administrateur du PC." }))
+    // IFEO blocks are machine-wide: only a monitored account is really kept out.
+    // The SID is claimed, not proven, but faking it only gets what a hand-made IFEO
+    // bypass already gets, and the child's session still kills the app on sight.
+    .handle('launchCheck', ({ sid, exeName }) => {
+      const exe = String(exeName).toLowerCase();
+      if (!dev && !monitored.has(String(sid))) return { allowed: true };
+      const text = launchBlockText(exe);
+      console.log(`[ifeo] 🚪 lancement de ${exe} ${text ? 'refusé' : 'autorisé (blocage périmé)'}`);
+      return text ? { allowed: false, text } : { allowed: true };
+    })
     .on('hello', ({ sid }) => {
       const id = String(sid);
       clientSids.set(client, id);

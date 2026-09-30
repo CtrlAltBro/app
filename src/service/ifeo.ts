@@ -17,9 +17,9 @@ const run = promisify(execFile);
 
 const IFEO = 'HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options';
 const STATE_FILE = 'blocked.json';
-// What Windows launches in place of a blocked app: our own session app, which just
-// shows its window (single-instance) and never starts the target. A GUI app, so no
-// console flashes.
+// What Windows launches in place of a blocked app: our own session app, as a stub
+// (src/main/blocked-launch.ts) that shows the blocked screen to a monitored account
+// and starts the real exe for anyone else. A GUI app, so no console flashes.
 const blocker = () => path.join(process.env.ProgramFiles ?? 'C:\\Program Files', 'CtrlAltBro', 'app', 'ctrlaltbro.exe');
 
 type State = { day: string; exes: string[] };
