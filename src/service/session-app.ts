@@ -92,6 +92,28 @@ export async function runningExesForUser(user: string): Promise<Set<string>> {
   return exes;
 }
 
+// Running processes in one session, with their image path, for identity-based
+// enforcement (issue #18). Filtered by SessionId (fast, no per-process owner lookup)
+// and excluding C:\Windows, so system processes are skipped.
+export async function runningProcessesForSession(sessionId: number): Promise<{ pid: number; path: string }[]> {
+  const script = `Get-CimInstance Win32_Process -Filter "SessionId=${sessionId} and ExecutablePath is not null" |
+    Where-Object { $_.ExecutablePath -notlike 'C:\\Windows\\*' } |
+    ForEach-Object { [pscustomobject]@{ pid = $_.ProcessId; path = $_.ExecutablePath } } |
+    ConvertTo-Json -Compress`;
+  const out = await runPowerShell(script).catch(() => '');
+  if (!out.trim()) return [];
+  const parsed = JSON.parse(out) as { pid: number; path: string } | { pid: number; path: string }[];
+  return Array.isArray(parsed) ? parsed : [parsed];
+}
+
+// Force-kill processes by PID (and their child processes). Used to close a renamed
+// copy of a blocked app, where taskkill by image name would not match.
+export async function killPids(pids: number[]) {
+  if (!pids.length) return;
+  const args = pids.flatMap((p) => ['/PID', String(p)]);
+  await run('taskkill.exe', [...args, '/F', '/T'], { windowsHide: true }).catch(() => undefined);
+}
+
 // Make the set of launch tasks match the monitored accounts. ensureTask is
 // idempotent, so calling it every refresh also restores a task a child deleted.
 export async function syncTasks(monitored: Set<string>, previous: Set<string>) {
