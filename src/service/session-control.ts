@@ -9,7 +9,10 @@ const run = promisify(execFile);
 // The session id of a signed-in account, or null if it is not logged on.
 export async function sessionIdForUser(user: string): Promise<number | null> {
   // `query user <name>` prints a header then the user's row; the ID is a number column.
-  const { stdout } = await run('query.exe', ['user', user], { windowsHide: true }).catch(() => ({ stdout: '' }));
+  // Exits 1 when the session is disconnected, output still valid (see sessionUsers).
+  const { stdout } = await run('query.exe', ['user', user], { windowsHide: true }).catch((err: { stdout?: string }) => ({
+    stdout: err.stdout ?? '',
+  }));
   for (const line of stdout.split(/\r?\n/).slice(1)) {
     // e.g. " child   console   1   Active ..."  (a leading ">" marks the current session)
     const m = /^[>\s]*\S+\s+\S*\s+(\d+)\s/.exec(line) ?? /^[>\s]*\S+\s+(\d+)\s/.exec(line);
@@ -21,9 +24,11 @@ export async function sessionIdForUser(user: string): Promise<number | null> {
 // Lowercased names of the accounts with a Windows session open (active, locked or
 // switched away from), or null if it could not be read. SSH logons are not listed.
 export async function sessionUsers(): Promise<string[] | null> {
-  // query.exe exits 1 when nobody is signed in, with "No User exists" on stderr.
-  const { stdout } = await run('query.exe', ['user'], { windowsHide: true }).catch((err: { stdout?: string; stderr?: string }) =>
-    /no user/i.test(err.stderr ?? '') ? { stdout: '' } : { stdout: null },
+  // query.exe exits 1 whenever a session is disconnected or nobody is signed in, so
+  // its output counts whatever the exit code; only a failure to run it is an error.
+  const stdout = await run('query.exe', ['user'], { windowsHide: true }).then(
+    (r) => r.stdout,
+    (err: { code?: unknown; stdout?: string }) => (typeof err.code === 'number' ? (err.stdout ?? '') : null),
   );
   if (stdout === null) return null;
   return stdout
