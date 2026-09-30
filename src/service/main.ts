@@ -1,7 +1,8 @@
 import net from 'node:net';
 import { flushNow, getStatus, initAgent, shutdownAgent, sleepNow } from '../core/agent';
 import { setHost } from '../core/host';
-import { foregroundTick, launchBlockText, ruledExes, runningTick, setEnforcementUser } from '../core/limits';
+import { foregroundTick, launchBlockText, ruledExes, runningTick, screenTick, setEnforcementUser } from '../core/limits';
+import { scheduleState } from '../core/schedule';
 import { recordEvent } from '../core/events-queue';
 import { addSession } from '../core/screen-time-queue';
 import type { AgentStatus, PairResult } from '../shared/agent-api';
@@ -322,12 +323,14 @@ void (async () => {
     // sensor counts instead, so this stays off to avoid double counting.
     const FALLBACK_MS = 20_000;
     const fallback = async () => {
-      const ruled = ruledExes();
-      if (!ruled.size) return;
       const on = await loggedOnSids().catch(() => new Set<string>());
       const withApp = new Set([...monitoredClients].map((c) => clientSids.get(c)));
+      const ruled = ruledExes();
+      let anySignedInWithoutApp = false;
       for (const sid of monitored) {
         if (!on.has(sid) || withApp.has(sid)) continue;
+        anySignedInWithoutApp = true;
+        if (!ruled.size) continue;
         const name = await nameForSid(sid);
         const running = await runningExesForUser(name);
         const hits = [...ruled].filter((exe) => running.has(exe));
@@ -336,8 +339,55 @@ void (async () => {
         setEnforcementUser(name);
         for (const exe of hits) runningTick(exe, FALLBACK_MS);
       }
+      // Screen-on time for the schedule's total cap: while a child is signed in with
+      // the app down, count the whole span (the foreground sensor is what counts it
+      // when the app is up), so killing the app never pauses the total.
+      if (anySignedInWithoutApp) screenTick(FALLBACK_MS);
     };
     setInterval(() => void fallback(), FALLBACK_MS).unref();
+
+    // Enforce the time schedule: outside the allowed hours or once the day's total is
+    // used up, lock the child's session (it goes back to the sign-in screen; logging
+    // back in is locked again at the next check). Runs even with the app down, since
+    // the child cannot change the PC's clock (standard user). Warn 5 min ahead.
+    let lockedEpisode = false;
+    let lastWarnKey = '';
+    const enforceSchedule = async () => {
+      const on = await loggedOnSids().catch(() => new Set<string>());
+      const signedIn = [...monitored].some((sid) => on.has(sid));
+      if (!signedIn) {
+        lockedEpisode = false;
+        return;
+      }
+      const state = scheduleState();
+      if (state.locked) {
+        if (!lockedEpisode) {
+          lockedEpisode = true;
+          const text =
+            state.reason === 'bedtime'
+              ? { title: "C'est l'heure de déconnecter", app: '', detail: "Ce n'est plus l'heure d'utiliser le PC. À demain !" }
+              : { title: 'Temps d’écran écoulé', app: '', detail: "Tu as utilisé tout ton temps d'écran pour aujourd'hui." };
+          session.emit('timeUp', text);
+          await new Promise((r) => setTimeout(r, 4_000));
+        }
+        await session.lockSession().catch(() => undefined);
+      } else {
+        lockedEpisode = false;
+        if (state.warn) {
+          const key = `${new Date().toDateString()}:${state.warn.reason}`;
+          if (key !== lastWarnKey) {
+            lastWarnKey = key;
+            const msg =
+              state.warn.reason === 'bedtime'
+                ? `Le PC se verrouille dans ${state.warn.minutes} min (heure limite).`
+                : `Plus que ${state.warn.minutes} min de temps d'écran aujourd'hui.`;
+            await session.showMessage(msg).catch(() => undefined);
+          }
+        }
+      }
+    };
+    setInterval(() => void enforceSchedule(), 20_000).unref();
+    void enforceSchedule();
   }
   // readableAll/writableAll: the service runs as SYSTEM, so without this the pipe
   // it creates is reachable only by SYSTEM and Administrators — the child's session
