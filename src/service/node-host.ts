@@ -2,11 +2,11 @@ import path from 'node:path';
 import type { Host, Shortcut } from '../core/host';
 import type { AgentStatus } from '../shared/agent-api';
 import type { SessionApi, TimeUpText } from '../shared/pipe';
-import { allowAll, allowLaunch, blockLaunch } from './ifeo';
+import { allowAll, allowLaunch, blockedExes, blockLaunch } from './ifeo';
 import { runPowerShell, runPowerShellSync } from './powershell';
 import { setBlockedSites } from './site-policy';
 
-const noGuard = { async block() {}, async allow() {}, async allowAll() {} };
+const noGuard = { async block() {}, async allow() {}, async allowAll() {}, blocked: async (): Promise<string[]> => [] };
 
 declare const __APP_VERSION__: string;
 
@@ -83,7 +83,7 @@ export function nodeHost({
       saveCurrentSession: () => session.request('saveCurrentSession'),
     },
     // In dev (core run as the user) we don't touch the machine-wide IFEO keys.
-    launchGuard: dev ? noGuard : { block: blockLaunch, allow: allowLaunch, allowAll },
+    launchGuard: dev ? noGuard : { block: blockLaunch, allow: allowLaunch, allowAll, blocked: blockedExes },
     sitePolicy: { setBlockedSites: dev ? () => undefined : setBlockedSites },
   };
 }

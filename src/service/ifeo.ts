@@ -105,6 +105,8 @@ async function unblock(exe: string) {
   if (empty) await run('reg.exe', ['delete', keyFor(exe), '/f'], { windowsHide: true }).catch(() => undefined);
 }
 
+export const blockedExes = async () => (await loadState()).exes;
+
 // Allow `exeName` to launch again (only removes a block we set).
 export async function allowLaunch(exeName: string) {
   const exe = exeName.toLowerCase();

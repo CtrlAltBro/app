@@ -43,6 +43,8 @@ export type Host = {
     block(exeName: string): Promise<void>;
     allow(exeName: string): Promise<void>;
     allowAll(): Promise<void>;
+    // Exes currently blocked (kept on disk across restarts).
+    blocked(): Promise<string[]>;
   };
   // Websites to block for the monitored children (browser policies, applied by the
   // service to each child's session). A no-op in dev.
