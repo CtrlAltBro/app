@@ -1,6 +1,6 @@
 import os from 'node:os';
 import type { AgentStatus, PairResult, SyncState } from '../shared/agent-api';
-import { API_URL } from './config';
+import { currentApiUrl, loadApiUrl } from './config';
 import { clearCredentials, loadCredentials, saveCredentials, type Credentials } from './credentials';
 import { clearEvents, loadEventsQueue } from './events-queue';
 import { host } from './host';
@@ -109,6 +109,7 @@ async function unpair() {
 }
 
 export async function initAgent() {
+  await loadApiUrl();
   await loadScreenTimeQueue();
   await loadEventsQueue();
   credentials = await loadCredentials();
@@ -124,10 +125,13 @@ export const isPaired = () => credentials !== null;
 async function pairRequest(code: string, name: string): Promise<{ ok: true; creds: Credentials } | { ok: false; error: string }> {
   const deviceName = name.trim();
   if (!code.trim() || !deviceName) return { ok: false, error: 'Renseigne le code et le nom du PC.' };
+  // The server chosen at install (config.json), read fresh: the admin may just have changed it.
+  await loadApiUrl();
+  const apiUrl = currentApiUrl();
 
   let res: Response;
   try {
-    res = await fetch(`${API_URL}/api/agent/v1/pair`, {
+    res = await fetch(`${apiUrl}/api/agent/v1/pair`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ code: code.trim(), name: deviceName }),
@@ -146,7 +150,7 @@ async function pairRequest(code: string, name: string): Promise<{ ok: true; cred
   if (typeof body?.deviceId !== 'string' || typeof body?.token !== 'string') {
     return { ok: false, error: 'Réponse inattendue du serveur.' };
   }
-  return { ok: true, creds: { apiUrl: API_URL, deviceId: body.deviceId, deviceName, token: body.token } };
+  return { ok: true, creds: { apiUrl, deviceId: body.deviceId, deviceName, token: body.token } };
 }
 
 // Live pairing (loop already running, e.g. a first-run flow). Refused when the PC

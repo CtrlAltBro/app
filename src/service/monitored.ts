@@ -1,4 +1,5 @@
-import { readJson, writeJson } from '../core/storage';
+import { CONFIG_FILE, readConfig } from '../core/config';
+import { writeJson } from '../core/storage';
 import { runPowerShell } from './powershell';
 
 // Which Windows accounts (by SID) the agent watches — the children, never the
@@ -9,20 +10,39 @@ import { runPowerShell } from './powershell';
 // every enabled local account that is NOT an administrator. The MSI (milestone 5)
 // will let the parent pick; the `monitor` CLI does it in dev.
 
-const CONFIG_FILE = 'config.json';
-const SID = /^S-1-5-21-[0-9-]+$/i;
+export const SID = /^S-1-5-21-[0-9-]+$/i;
 
-type Config = { monitoredSids?: string[] };
+export type LocalAccount = { sid: string; name: string; admin: boolean };
 
-const readConfig = async (): Promise<Config> => (await readJson<Config>(CONFIG_FILE)) ?? {};
+// Enabled local accounts and whether each is an administrator. The Administrators
+// group is found by its well-known SID (S-1-5-32-544), not by name: it is called
+// "Administrateurs" on a French Windows. Read through ADSI, which unlike
+// Get-LocalGroupMember does not fail when the group holds an orphaned SID.
+const LOCAL_ACCOUNTS = `$ErrorActionPreference = 'Stop'
+$group = (New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544').Translate([Security.Principal.NTAccount]).Value.Split('\\')[1]
+$admins = @(([ADSI]"WinNT://./$group,group").psbase.Invoke('Members') | ForEach-Object {
+  $bytes = $_.GetType().InvokeMember('objectSid', 'GetProperty', $null, $_, $null)
+  (New-Object Security.Principal.SecurityIdentifier($bytes, 0)).Value
+})
+$list = @(Get-LocalUser | Where-Object { $_.Enabled } | ForEach-Object {
+  [pscustomobject]@{ sid = $_.SID.Value; name = $_.Name; admin = $admins -contains $_.SID.Value }
+})
+ConvertTo-Json -InputObject $list -Compress`;
 
-// Enabled local accounts that are not members of Administrators.
+export async function localAccounts(): Promise<LocalAccount[]> {
+  const out = await runPowerShell(LOCAL_ACCOUNTS);
+  return (JSON.parse(out || '[]') as LocalAccount[]).filter((a) => SID.test(a.sid));
+}
+
+// Enabled local accounts that are not administrators.
 async function defaultSids(): Promise<string[]> {
-  const script = `$ErrorActionPreference = 'Stop'
-$admins = @(Get-LocalGroupMember -Group 'Administrators' | Where-Object { $_.ObjectClass -eq 'User' } | ForEach-Object { $_.SID.Value })
-Get-LocalUser | Where-Object { $_.Enabled -and $admins -notcontains $_.SID.Value } | ForEach-Object { $_.SID.Value }`;
-  const out = await runPowerShell(script).catch(() => '');
-  return out.split(/\r?\n/).map((s) => s.trim()).filter((s) => SID.test(s));
+  const accounts = await localAccounts().catch((): LocalAccount[] => []);
+  return accounts.filter((a) => !a.admin).map((a) => a.sid);
+}
+
+// Admin only (CLI): replace the explicit list of monitored accounts.
+export async function setMonitored(sids: string[]) {
+  await writeJson(CONFIG_FILE, { ...(await readConfig()), monitoredSids: [...new Set(sids)] });
 }
 
 // The SIDs to watch right now: the explicit list, or the default when it is empty.

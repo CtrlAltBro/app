@@ -1,4 +1,6 @@
 import { clearPairing, getStatus, initAgent, pairFromCli } from '../core/agent';
+import { currentApiUrl, loadApiUrl, saveApiUrl } from '../core/config';
+import { loadCredentials } from '../core/credentials';
 import {
   addMonitored,
   isDefaultMonitored,
@@ -6,6 +8,7 @@ import {
   nameForSid,
   removeMonitored,
   resolveSid,
+  setMonitored,
   useDefaultMonitored,
 } from './monitored';
 
@@ -13,11 +16,17 @@ import {
 //   service.js pair <code> <name...> [--force]
 //   service.js unpair
 //   service.js status
-//   service.js monitor [list | add <user|sid> | remove <user|sid> | default]
+//   service.js monitor [list | add <user|sid> | remove <user|sid> | set <user|sid>,... | default]
+//   service.js server [<url>]
 // Returns true when it handled a command, false to fall through to the service.
 export async function runCli(argv: string[]): Promise<boolean> {
   const [cmd, ...rest] = argv.filter((a) => a !== '--dev');
-  if (cmd !== 'pair' && cmd !== 'unpair' && cmd !== 'status' && cmd !== 'monitor') return false;
+  if (cmd !== 'pair' && cmd !== 'unpair' && cmd !== 'status' && cmd !== 'monitor' && cmd !== 'server') return false;
+
+  if (cmd === 'server') {
+    await runServer(rest[0]);
+    return true;
+  }
 
   if (cmd === 'status') {
     await initAgent();
@@ -72,6 +81,27 @@ async function runMonitor(rest: string[]) {
     return;
   }
 
+  if (action === 'set') {
+    const sids: string[] = [];
+    for (const target of (rest[1] ?? '').split(',').map((t) => t.trim()).filter(Boolean)) {
+      const sid = await resolveSid(target);
+      if (!sid) {
+        console.error(`Compte introuvable : ${target}`);
+        process.exitCode = 1;
+        return;
+      }
+      sids.push(sid);
+    }
+    if (!sids.length) {
+      console.error('Usage : service.js monitor set <user|sid>,<user|sid>…');
+      process.exitCode = 2;
+      return;
+    }
+    await setMonitored(sids);
+    await printMonitored();
+    return;
+  }
+
   if (action === 'default') {
     await useDefaultMonitored();
     await printMonitored();
@@ -96,6 +126,30 @@ async function runMonitor(rest: string[]) {
     return;
   }
 
-  console.error('Usage : service.js monitor [list | add <user|sid> | remove <user|sid> | default]');
+  console.error('Usage : service.js monitor [list | add <user|sid> | remove <user|sid> | set <user|sid>,… | default]');
   process.exitCode = 2;
+}
+
+// Show or change the API server. A paired PC keeps the server it paired with, so
+// moving to another server forgets the pairing (its token is worthless there): the
+// PC must be paired again with a code from the new dashboard.
+async function runServer(url: string | undefined) {
+  await loadApiUrl();
+  if (!url) {
+    console.log(`Serveur : ${currentApiUrl()}`);
+    return;
+  }
+  const before = currentApiUrl();
+  const saved = await saveApiUrl(url);
+  if (!saved) {
+    console.error(`Adresse invalide : ${url} (attendu : http(s)://…)`);
+    process.exitCode = 2;
+    return;
+  }
+  console.log(`Serveur : ${saved}`);
+  const creds = await loadCredentials();
+  if (creds && creds.apiUrl !== saved && before !== saved) {
+    await clearPairing();
+    console.log('Ce PC était appairé à un autre serveur : appairage effacé, ré-appaire-le avec un code du nouveau dashboard.');
+  }
 }

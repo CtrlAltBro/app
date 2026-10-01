@@ -12,17 +12,79 @@ const submit = $<HTMLButtonElement>('#pair-form button');
 const error = $('#pair-error');
 const paired = $('#paired');
 
+// Settings screen: server + monitored accounts, read from the service, saved as admin.
+const settings = $('#settings');
+const settingsForm = $<HTMLFormElement>('#settings-form');
+const apiUrlInput = settingsForm.elements.namedItem('apiUrl') as HTMLInputElement;
+const accountsBox = $('#accounts');
+const settingsError = $('#settings-error');
+const settingsOk = $('#settings-ok');
+const settingsSubmit = $<HTMLButtonElement>('#settings-form button[type="submit"]');
+const openSettingsButton = $<HTMLButtonElement>('#open-settings');
+let settingsOpen = false;
+let lastStatus: AgentStatus | null = null;
+
+function showSettings(open: boolean) {
+  settingsOpen = open;
+  settings.hidden = !open;
+  openSettingsButton.hidden = open;
+  if (lastStatus) render(lastStatus);
+}
+
+async function openSettings() {
+  settingsError.hidden = true;
+  settingsOk.hidden = true;
+  showSettings(true);
+  try {
+    const s = await window.agent.getSettings();
+    apiUrlInput.value = s.apiUrl;
+    accountsBox.querySelectorAll('label').forEach((l) => l.remove());
+    for (const account of s.accounts) {
+      const label = document.createElement('label');
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.value = account.sid;
+      box.checked = account.monitored;
+      label.append(box, `${account.name}${account.admin ? ' (administrateur)' : ''}`);
+      accountsBox.append(label);
+    }
+  } catch {
+    settingsError.textContent = 'Service CtrlAltBro injoignable.';
+    settingsError.hidden = false;
+  }
+}
+
+openSettingsButton.addEventListener('click', () => void openSettings());
+$('#settings-close').addEventListener('click', () => showSettings(false));
+
+settingsForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  settingsError.hidden = true;
+  settingsOk.hidden = true;
+  const sids = [...accountsBox.querySelectorAll<HTMLInputElement>('input:checked')].map((b) => b.value);
+  settingsSubmit.disabled = true;
+  const result = await window.agent.saveSettings(apiUrlInput.value, sids);
+  settingsSubmit.disabled = false;
+  if (result.ok) {
+    settingsOk.hidden = false;
+  } else {
+    settingsError.textContent = result.error;
+    settingsError.hidden = false;
+  }
+});
+
 function render(status: AgentStatus) {
+  lastStatus = status;
   loading.hidden = true;
-  form.hidden = status.paired;
-  paired.hidden = !status.paired;
+  form.hidden = status.paired || settingsOpen;
+  paired.hidden = !status.paired || settingsOpen;
   if (status.paired) {
     $('#device-name').textContent = status.deviceName;
     $('#sync-status').textContent = syncLabel(status.sync);
     $('#sync-status').classList.toggle('error', !!status.sync.error);
   } else {
     nameInput.value ||= status.suggestedName;
-    codeInput.focus();
+    if (!settingsOpen) codeInput.focus();
   }
 }
 

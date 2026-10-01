@@ -6,11 +6,12 @@ import { foregroundTick, isEnforced, launchBlockText, ruledExes, runningTick, sc
 import { scheduleState } from '../core/schedule';
 import { recordEvent } from '../core/events-queue';
 import { addSession } from '../core/screen-time-queue';
-import type { AgentStatus, PairResult } from '../shared/agent-api';
+import type { AgentSettings, AgentStatus, PairResult } from '../shared/agent-api';
 import type { ScreenTimeSession } from '../shared/api-types';
 import { PIPE_PATH, PipeConnection, type CoreApi, type SessionApi } from '../shared/pipe';
 import { runCli } from './cli';
-import { monitoredSids, nameForSid } from './monitored';
+import { isDefaultMonitored, localAccounts, monitoredSids, nameForSid } from './monitored';
+import { currentApiUrl, loadApiUrl } from '../core/config';
 import { lockUserSession, messageUser, sessionIdForUser, sessionUsers } from './session-control';
 import { nodeHost, type SessionLink } from './node-host';
 import { clearStaleBlocks, pauseLaunchBlocks } from './ifeo';
@@ -232,6 +233,21 @@ const server = net.createServer((socket): void => {
     .handle('getStatus', () => getStatus())
     // The child must not pair from their session: pairing is an admin command.
     .handle('pair', (): PairResult => ({ ok: false, error: "L'appairage se fait par l'administrateur du PC." }))
+    // Read-only, so the session app can show them; changing them is an admin command.
+    .handle('getSettings', async (): Promise<AgentSettings> => {
+      await loadApiUrl();
+      const [accounts, sids, isDefault] = await Promise.all([
+        localAccounts().catch(() => []),
+        monitoredSids().catch((): string[] => []),
+        isDefaultMonitored().catch(() => true),
+      ]);
+      const watched = new Set(sids);
+      return {
+        apiUrl: currentApiUrl(),
+        explicit: !isDefault,
+        accounts: accounts.map((a) => ({ ...a, monitored: watched.has(a.sid) })),
+      };
+    })
     // IFEO blocks are machine-wide: only a monitored account is really kept out.
     // The SID is claimed, not proven, but faking it only gets what a hand-made IFEO
     // bypass already gets, and the child's session still kills the app on sight.
