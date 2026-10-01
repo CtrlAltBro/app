@@ -1,4 +1,5 @@
 import net from 'node:net';
+import path from 'node:path';
 import { flushNow, getStatus, initAgent, shutdownAgent, sleepNow } from '../core/agent';
 import { setHost } from '../core/host';
 import { foregroundTick, isEnforced, launchBlockText, ruledExes, runningTick, screenTick, setEnforcementUser } from '../core/limits';
@@ -114,7 +115,7 @@ const session: SessionLink = {
 const health = async () => {
   const on = await loggedOnSids().catch(() => new Set<string>());
   return {
-    appConnected: monitoredConnected().length > 0,
+    appConnected: (await sidsWithGenuineApp()).size > 0,
     childSignedIn: dev ? clients.size > 0 : [...monitored].some((sid) => on.has(sid)),
   };
 };
@@ -146,9 +147,12 @@ function scanSession(sid: string): Promise<Scan> {
     const byPid = await identify(procs);
     const out = emptyScan();
     for (const p of procs) {
+      // Always listed under its file name, even when its identity could not be read
+      // (e.g. Store apps in the locked-down WindowsApps folder), so it still counts.
+      const name = p.path.replace(/^.*[\\/]/, '').toLowerCase();
+      out.names.add(name);
       const id = byPid.get(p.pid);
       if (!id) continue;
-      out.names.add(id.name);
       out.toCanonical.set(id.name, id.canonical);
       out.identities.push({ ...id, pid: p.pid });
     }
@@ -156,6 +160,31 @@ function scanSession(sid: string): Promise<Scan> {
   })().catch(() => emptyScan());
   runningCache.set(sid, { at: Date.now(), scan });
   return scan;
+}
+
+// Issue #13: anyone can connect to the pipe and announce a child's account, which
+// would make the service believe the session app is there (no fallback counting, no
+// relaunch) while nothing is counted. So an account only has its session app when a
+// client announced it AND our packaged exe, in Program Files (not writable by the
+// child), really runs in that session. A claim without it is reported as spoofing.
+const APP_EXE = path
+  .join(process.env.ProgramFiles ?? 'C:\\Program Files', 'CtrlAltBro', 'app', 'ctrlaltbro.exe')
+  .toLowerCase();
+async function sidsWithGenuineApp(): Promise<Set<string>> {
+  const claimed = new Set([...monitoredClients].map((c) => clientSids.get(c)).filter((s): s is string => !!s));
+  if (dev) return claimed;
+  const genuine = new Set<string>();
+  for (const sid of claimed) {
+    const scan = await scanSession(sid);
+    if (scan.identities.some((i) => i.path.toLowerCase() === APP_EXE)) {
+      genuine.add(sid);
+    } else if (Date.now() - (spoofReportedAt.get(sid) ?? 0) > SPOOF_REPORT_MS) {
+      spoofReportedAt.set(sid, Date.now());
+      console.log(`[pipe] 🕵️  client du pipe pour ${sid} sans la vraie app de session : ignoré`);
+      recordEvent('pipe_spoof', "Un programme se fait passer pour l'app de contrôle alors qu'elle ne tourne pas : le comptage de secours reste actif.");
+    }
+  }
+  return genuine;
 }
 
 // A just-launched exe can miss the cached tasklist for a tick or two, so only a
@@ -329,7 +358,7 @@ void (async () => {
       await syncSitePolicies([...monitored].filter((sid) => on.has(sid)));
       // Signed out: the app went away with the session, not a kill.
       for (const sid of killedAppSids) if (!on.has(sid)) killedAppSids.delete(sid);
-      const withApp = new Set([...monitoredClients].map((c) => clientSids.get(c)));
+      const withApp = await sidsWithGenuineApp();
       for (const sid of monitored) {
         if (!on.has(sid) || withApp.has(sid)) continue;
         if (Date.now() - (relaunchAt.get(sid) ?? 0) < RELAUNCH_COOLDOWN_MS) continue;
@@ -350,7 +379,7 @@ void (async () => {
     const FALLBACK_MS = 20_000;
     const fallback = async () => {
       const on = await loggedOnSids().catch(() => new Set<string>());
-      const withApp = new Set([...monitoredClients].map((c) => clientSids.get(c)));
+      const withApp = await sidsWithGenuineApp();
       const ruled = ruledExes();
       let anySignedInWithoutApp = false;
       for (const sid of monitored) {
