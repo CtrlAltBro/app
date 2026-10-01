@@ -14,7 +14,8 @@ let schedule: Schedule = { days: {} };
 let extraMs = 0;
 
 export function setSchedule(rules: Rules) {
-  schedule = rules.schedule ?? { days: {} };
+  // Never trust the shape: a device without a schedule yet may come as {}.
+  schedule = { days: rules.schedule?.days ?? {} };
   extraMs = (rules.screen?.extraMinutes ?? 0) * 60_000;
 }
 
