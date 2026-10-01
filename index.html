@@ -42,6 +42,32 @@
         <p id="sync-status" class="muted"></p>
         <p class="muted">Tu peux le gérer depuis le dashboard.</p>
       </section>
+
+      <section id="settings" hidden>
+        <h2>Paramètres</h2>
+        <form id="settings-form">
+          <label>
+            Adresse du serveur
+            <input name="apiUrl" type="url" spellcheck="false" autocomplete="off" required />
+          </label>
+          <fieldset id="accounts">
+            <legend>Comptes surveillés</legend>
+          </fieldset>
+          <p class="muted">
+            Ne surveille pas les comptes administrateur (parents). Changer de serveur efface l'appairage : il faudra
+            ré-appairer ce PC avec un code du nouveau dashboard.
+          </p>
+          <p id="settings-error" class="error" role="alert" hidden></p>
+          <p id="settings-ok" class="success" hidden>Enregistré. Le service redémarre…</p>
+          <p class="muted">Une fenêtre d'autorisation Windows (administrateur) s'ouvrira pour valider.</p>
+          <div class="actions">
+            <button type="submit">Enregistrer</button>
+            <button type="button" id="settings-close">Fermer</button>
+          </div>
+        </form>
+      </section>
+
+      <p><button type="button" id="open-settings" class="link">Paramètres</button></p>
     </main>
     <footer id="build" class="build" title="Build"></footer>
     <script type="module" src="/src/renderer.ts"></script>

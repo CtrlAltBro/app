@@ -17,6 +17,19 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 $version = (Get-Content (Join-Path $repo 'package.json') -Raw | ConvertFrom-Json).version
 
+# Server proposed by default on the installer's "Serveur" page: same source as the
+# build (CTRLALTBRO_API_URL from the environment, else .env.local, else .env).
+$defaultApiUrl = $env:CTRLALTBRO_API_URL
+foreach ($envFile in @('.env.local', '.env')) {
+  if ($defaultApiUrl) { break }
+  $path = Join-Path $repo $envFile
+  if (Test-Path $path) {
+    $line = Get-Content $path | Where-Object { $_ -match '^\s*CTRLALTBRO_API_URL\s*=' } | Select-Object -First 1
+    if ($line) { $defaultApiUrl = ($line -split '=', 2)[1].Trim().Trim('"') }
+  }
+}
+if (-not $defaultApiUrl) { $defaultApiUrl = 'http://localhost:5173' }
+
 if (-not (Test-Path $NSIS)) { throw "makensis introuvable : $NSIS. Installe NSIS (winget install NSIS.NSIS) ou passe -NSIS." }
 if (-not (Test-Path $WinSW)) { throw "WinSW introuvable : $WinSW. Télécharge WinSW-x64.exe ou passe -WinSW." }
 
@@ -46,8 +59,8 @@ try {
   Copy-Item (Join-Path $repo 'installer\postinstall.ps1') $staging
   Copy-Item (Join-Path $repo 'installer\preuninstall.ps1') $staging
 
-  Write-Host "→ Compilation de l'installeur (v$version)"
-  & $NSIS "/DVERSION=$version" "/DSTAGING=$staging" (Join-Path $repo 'installer\ctrlaltbro.nsi')
+  Write-Host "→ Compilation de l'installeur (v$version, serveur par défaut $defaultApiUrl)"
+  & $NSIS "/DVERSION=$version" "/DSTAGING=$staging" "/DDEFAULT_API_URL=$defaultApiUrl" (Join-Path $repo 'installer\ctrlaltbro.nsi')
   if ($LASTEXITCODE) { throw "makensis a échoué (code $LASTEXITCODE)" }
 
   $out = Join-Path $repo "installer\ctrlaltbro-setup-$version.exe"

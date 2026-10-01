@@ -1,5 +1,5 @@
 import type { Socket } from 'node:net';
-import type { AgentStatus, PairResult } from './agent-api';
+import type { AgentSettings, AgentStatus, PairResult } from './agent-api';
 import type { ScreenTimeSession } from './api-types';
 
 // Named pipe between the core (service) and the session app (Electron, on the
@@ -15,6 +15,7 @@ export type CoreApi = {
   requests: {
     getStatus: [void, AgentStatus];
     pair: [{ code: string; name: string }, PairResult];
+    getSettings: [void, AgentSettings];
     // From the IFEO stub: may this account start this blocked exe? `text` is the
     // screen to show when it may not.
     launchCheck: [{ sid: string; exeName: string }, { allowed: boolean; text?: TimeUpText }];

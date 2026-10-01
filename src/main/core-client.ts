@@ -3,7 +3,7 @@ import net from 'node:net';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { BrowserWindow, dialog, powerMonitor } from 'electron';
-import type { AgentStatus, PairResult } from '../shared/agent-api';
+import type { AgentSettings, AgentStatus, PairResult, SaveResult } from '../shared/agent-api';
 import type { ScreenTimeSession } from '../shared/api-types';
 import { PIPE_PATH, PipeConnection, type CoreApi, type SessionApi } from '../shared/pipe';
 import { saveCurrentSession, startScreenTime, stopScreenTime } from './screen-time';
@@ -137,28 +137,56 @@ export async function pair(code: string, name: string): Promise<PairResult> {
 
 const psQuote = (s: string) => `'${s.replace(/'/g, "''")}'`;
 
-async function runElevatedPairing(code: string, name: string): Promise<{ ok: boolean; error?: string }> {
-  const dir = path.join(process.env.ProgramFiles ?? 'C:\\Program Files', 'CtrlAltBro');
-  const node = path.join(dir, 'node.exe');
-  const js = path.join(dir, 'service.js');
-  // Runs elevated: pair as admin, then restart the service so it reloads the token.
-  const inner =
-    `& ${psQuote(node)} ${psQuote(js)} pair ${psQuote(code)} ${psQuote(name)}; ` +
-    `if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; Restart-Service CtrlAltBro`;
+const serviceDir = () => path.join(process.env.ProgramFiles ?? 'C:\\Program Files', 'CtrlAltBro');
+
+// Runs admin commands (PowerShell) through a UAC prompt, then restarts the service so
+// it reloads what changed. A standard user cannot elevate, so this stays admin-only.
+// Resolves with the exit code: 0 ok, 1223 UAC declined, anything else failed.
+async function runElevated(inner: string): Promise<number> {
+  const script = `${inner}; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; Restart-Service CtrlAltBro`;
   // -Verb RunAs raises the UAC prompt; on decline it throws (mapped to 1223).
   // -WindowStyle Hidden keeps the elevated helper's console from flashing on screen.
   const outer =
     `try { $p = Start-Process powershell -Verb RunAs -Wait -PassThru ` +
-    `-ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-Command', ${psQuote(inner)}); exit $p.ExitCode } ` +
+    `-ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-Command', ${psQuote(script)}); exit $p.ExitCode } ` +
     `catch { exit 1223 }`;
   try {
     await run('powershell.exe', ['-NoProfile', '-Command', outer], { windowsHide: true });
-    return { ok: true };
+    return 0;
   } catch (err) {
     const exit = (err as { code?: number | string }).code;
-    if (exit === 1223) return { ok: false, error: 'Appairage annulé (autorisation administrateur refusée).' };
-    return { ok: false, error: "Échec de l'appairage. Vérifie le code, puis réessaie (une autorisation administrateur est requise)." };
+    return typeof exit === 'number' ? exit : 1;
   }
+}
+
+// `& node service.js <args…>` as a PowerShell command, every argument quoted.
+const serviceCommand = (...args: string[]) => {
+  const dir = serviceDir();
+  return `& ${psQuote(path.join(dir, 'node.exe'))} ${psQuote(path.join(dir, 'service.js'))} ${args.map(psQuote).join(' ')}`;
+};
+
+async function runElevatedPairing(code: string, name: string): Promise<{ ok: boolean; error?: string }> {
+  const exit = await runElevated(serviceCommand('pair', code, name));
+  if (exit === 0) return { ok: true };
+  if (exit === 1223) return { ok: false, error: 'Appairage annulé (autorisation administrateur refusée).' };
+  return { ok: false, error: "Échec de l'appairage. Vérifie le code, puis réessaie (une autorisation administrateur est requise)." };
+}
+
+// Server and monitored accounts, read from the service (read-only over the pipe).
+export async function getSettings(): Promise<AgentSettings> {
+  return (await connected).request('getSettings');
+}
+
+// Change them as admin: a UAC prompt, then the service restarts with the new config.
+// Moving to another server forgets the pairing (see `service.js server`).
+export async function saveSettings(apiUrl: string, monitoredSids: string[]): Promise<SaveResult> {
+  const exit = await runElevated(
+    `${serviceCommand('server', apiUrl)}; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; ${serviceCommand('monitor', 'set', monitoredSids.join(','))}`,
+  );
+  if (exit === 0) return { ok: true };
+  if (exit === 1223) return { ok: false, error: 'Modification annulée (autorisation administrateur refusée).' };
+  if (exit === 2) return { ok: false, error: 'Adresse du serveur invalide.' };
+  return { ok: false, error: 'Échec de l’enregistrement (une autorisation administrateur est requise).' };
 }
 
 // Poll the last pushed status until the PC shows as paired, or give up.
