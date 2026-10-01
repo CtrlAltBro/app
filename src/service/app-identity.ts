@@ -11,6 +11,7 @@ import { runPowerShell } from './powershell';
 
 export type Identity = {
   name: string; // on-disk file name, lowercased (e.g. "truc.exe")
+  path: string; // full image path
   canonical: string; // what rules match on (e.g. "firefox.exe")
   renamed: boolean; // canonical !== name
   signatureValid: boolean;
@@ -89,7 +90,7 @@ export async function identify(procs: Process[]): Promise<Map<number, Identity>>
     const hit = cache.get(p.path);
     if (!hit || keys.get(p.path) !== hit.key) continue;
     const name = baseName(p.path);
-    out.set(p.pid, { name, ...hit.identity, renamed: hit.identity.canonical !== name });
+    out.set(p.pid, { name, path: p.path, ...hit.identity, renamed: hit.identity.canonical !== name });
   }
   return out;
 }
