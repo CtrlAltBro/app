@@ -320,6 +320,10 @@ async function stop(reason: string) {
 process.on('SIGINT', () => void stop('Ctrl+C'));
 process.on('SIGTERM', () => void stop('SIGTERM'));
 process.on('SIGBREAK', () => void stop('Ctrl+Break'));
+// A bug in one periodic task (they are all async) must never take the whole service,
+// and with it the child's protection, down: Windows only restarts it 3 times. Log
+// the error and keep running.
+process.on('unhandledRejection', (err) => console.error('[service] ⚠️ erreur non gérée, le service continue :', err));
 
 void (async () => {
   // Admin one-shot commands (pair / unpair / status) run and exit; no pipe server.
